@@ -38,9 +38,9 @@ export const useSendMessage = () => {
         const index = newList.findIndex(c => c.id === chatId);
         if (index !== -1) {
           newList[index] = {
-             ...newList[index],
-             lastMessage: variables.content,
-             lastMessageTime: new Date().toISOString()
+            ...newList[index],
+            lastMessage: variables.content,
+            lastMessageTime: new Date().toISOString()
           };
           newList.unshift(newList.splice(index, 1)[0]);
         }
@@ -58,7 +58,8 @@ export const useSendMessage = () => {
           createdAt: new Date().toISOString(),
           state: 'SENDING',
           type: variables.type || 'TEXT',
-          deleted: false
+          deleted: false,
+          replyTo: (variables as any).replyTo,
         };
         return [newMessage, ...current];
       });
@@ -81,7 +82,7 @@ export const useSendMessage = () => {
 export const useUploadMedia = (chatId: string) => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: { formData: FormData, localUri: string, fileType: string, fileName: string }) => 
+    mutationFn: (data: { formData: FormData, localUri: string, fileType: string, fileName: string, replyTo?: any }) =>
       uploadMediaMessage(chatId, data.formData),
     onMutate: async (variables) => {
       const user = useAuthStore.getState().user;
@@ -94,9 +95,9 @@ export const useUploadMedia = (chatId: string) => {
         const index = newList.findIndex(c => c.id === chatId);
         if (index !== -1) {
           newList[index] = {
-             ...newList[index],
-             lastMessage: "[Hình ảnh/Tệp tin]",
-             lastMessageTime: new Date().toISOString()
+            ...newList[index],
+            lastMessage: "[Hình ảnh/Tệp tin]",
+            lastMessageTime: new Date().toISOString()
           };
           newList.unshift(newList.splice(index, 1)[0]);
         }
@@ -112,10 +113,12 @@ export const useUploadMedia = (chatId: string) => {
           content: variables.fileName,
           mediaUrl: variables.localUri, // Dùng ảnh local để hiện luôn
           senderId: (user as any)?.id,
+          senderName: (user as any)?.name || (user as any)?.firstName || "Bạn",
           createdAt: new Date().toISOString(),
           state: 'SENDING',
           type: isImage ? 'IMAGE' : (variables.fileType.startsWith('video') ? 'VIDEO' : 'FILE'),
-          deleted: false
+          deleted: false,
+          replyTo: variables.replyTo,
         };
         return [newMessage, ...current];
       });
@@ -123,7 +126,7 @@ export const useUploadMedia = (chatId: string) => {
       return { tempId, chatId };
     },
     onSuccess: (data, variables, context) => {
-       queryClient.setQueryData(["messages", chatId, 0], (old: any[] | undefined) => {
+      queryClient.setQueryData(["messages", chatId, 0], (old: any[] | undefined) => {
         if (!old) return old;
         const alreadyExists = old.some(m => m.id === data.id);
         if (alreadyExists) return old.filter(m => m.id !== context?.tempId);

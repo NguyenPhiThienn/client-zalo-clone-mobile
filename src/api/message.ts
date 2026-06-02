@@ -2,14 +2,16 @@
 import { fetchAPI } from "@/lib/fetch";
 
 // ─── Enums (khớp MessageState & MessageType) ──────────────────────────────────
-export type MessageType = "TEXT" | "IMAGE" | "VIDEO" | "FILE" | "AUDIO" | "VOICE";
+export type MessageType = "TEXT" | "IMAGE" | "VIDEO" | "FILE" | "AUDIO" | "VOICE" | "NOTIFICATION";
 export type MessageState = "SENT" | "DELIVERED" | "SEEN";
 
 // ─── Types (khớp MessageDto.java) ─────────────────────────────────────────────
 export interface ReactionDto {
+  id?: string;
   emoji: string;
   userId: string;
-  userName?: string;
+  userFullName?: string;
+  createdDate?: string;
 }
 
 export interface MessageDto {
@@ -23,9 +25,14 @@ export interface MessageDto {
   senderName?: string;   // Tên người gửi (dành cho Group)
   receiverId?: string;   // UUID
   mediaUrl?: string;
+  fileName?: string;
   createdDate?: string;  // Trường thay thế cho createdAt từ BE Group
   deleted?: boolean;
   reactions?: ReactionDto[];
+  mentionedUserIds?: string[];
+  mentionAll?: boolean;
+  replyToId?: string;
+  replyTo?: { id: string; content?: string; senderName?: string; mediaUrl?: string; type?: MessageType };
 }
 
 // ─── API calls ────────────────────────────────────────────────────────────────
@@ -81,6 +88,8 @@ export const deleteMessageForMe = async (messageId: string): Promise<void> => {
 
 /** GET /api/v1/message/media/{filename} — Build URL media file */
 export const getMediaUrl = (filename: string): string => {
+  if (!filename) return "";
+  if (filename.startsWith("http")) return filename;
   const baseUrl = process.env.EXPO_PUBLIC_SERVER_URL || "http://10.0.2.2:8080/api/v1";
   return `${baseUrl}/message/media/${filename}`;
 };

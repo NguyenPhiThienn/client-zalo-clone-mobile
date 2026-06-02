@@ -8,6 +8,11 @@ import {
   rejectFriendRequest,
   unfriend,
 } from "@/api/friend";
+import {
+  blockUser,
+  unblockUser,
+  getBlockedUsers,
+} from "@/api/user";
 
 export const useContacts = () => {
   return useQuery({
@@ -70,3 +75,36 @@ export const useUnfriend = () => {
     },
   });
 };
+
+export const useBlockedUsers = () => {
+  return useQuery({
+    queryKey: ["blocked-users"],
+    queryFn: getBlockedUsers,
+  });
+};
+
+export const useBlockUser = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: blockUser,
+    onSuccess: (_, userId) => {
+      queryClient.invalidateQueries({ queryKey: ["contacts"] });
+      queryClient.invalidateQueries({ queryKey: ["user", userId] });
+      queryClient.invalidateQueries({ queryKey: ["blocked-users"] });
+      queryClient.invalidateQueries({ queryKey: ["chats"] });
+    },
+  });
+};
+
+export const useUnblockUser = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: unblockUser,
+    onSuccess: (_, userId) => {
+      queryClient.invalidateQueries({ queryKey: ["blocked-users"] });
+      queryClient.invalidateQueries({ queryKey: ["user", userId] });
+      queryClient.invalidateQueries({ queryKey: ["contacts"] });
+    },
+  });
+};
+

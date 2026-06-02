@@ -1,6 +1,5 @@
-// components/ChatScreen/ChatHeader/index.tsx
 import React from 'react';
-import { View, Text, TouchableOpacity, Image, StyleSheet } from 'react-native';
+import { View, Text, TouchableOpacity, Image, StyleSheet, ActivityIndicator } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -14,15 +13,20 @@ interface ChatHeaderProps {
   lastSeenText?: string;
   isGroup?: boolean;
   groupId?: string;
+  onPressSummarize?: () => void;
+  loadingSummarize?: boolean;
 }
 
-const ChatHeader = ({ name, avatarUrl, online, lastSeenText, isGroup, groupId }: ChatHeaderProps) => {
+const ChatHeader = ({ name, avatarUrl, online, lastSeenText, isGroup, groupId, onPressSummarize, loadingSummarize }: ChatHeaderProps) => {
   const router = useRouter();
   const avatar = getAvatarUrl(name, avatarUrl);
 
   const handlePressInfo = () => {
     if (isGroup && groupId) {
       router.push(`/(root)/group-info?id=${groupId}` as any);
+    } else if (!isGroup && groupId) {
+      // Navigate to user profile
+      router.push(`/(root)/user/${groupId}` as any);
     }
   };
 
@@ -56,13 +60,32 @@ const ChatHeader = ({ name, avatarUrl, online, lastSeenText, isGroup, groupId }:
 
         {/* Các nút Call/Video/Menu */}
         <View style={styles.actions}>
+          {onPressSummarize && (
+            <TouchableOpacity style={styles.iconBtn} onPress={onPressSummarize} disabled={loadingSummarize}>
+              {loadingSummarize ? (
+                <ActivityIndicator size="small" color="white" />
+              ) : (
+                <Ionicons name="sparkles" size={20} color="white" />
+              )}
+            </TouchableOpacity>
+          )}
           <TouchableOpacity style={styles.iconBtn}>
             <Ionicons name="call-outline" size={22} color="white" />
           </TouchableOpacity>
           <TouchableOpacity style={styles.iconBtn}>
             <Ionicons name="videocam-outline" size={24} color="white" />
           </TouchableOpacity>
-          <TouchableOpacity style={styles.iconBtn}>
+          <TouchableOpacity 
+            style={styles.iconBtn} 
+            onPress={() => {
+              if (isGroup && groupId) {
+                router.push({
+                  pathname: "/(root)/group-storage",
+                  params: { id: groupId, name: name }
+                });
+              }
+            }}
+          >
             <Ionicons name="list-outline" size={24} color="white" />
           </TouchableOpacity>
         </View>
@@ -70,6 +93,7 @@ const ChatHeader = ({ name, avatarUrl, online, lastSeenText, isGroup, groupId }:
     </SafeAreaView>
   );
 };
+
 
 const styles = StyleSheet.create({
   wrapper: {

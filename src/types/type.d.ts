@@ -47,7 +47,7 @@ export interface AuthStore {
 // ─── Message Types ───────────────────────────────────────────────────────────
 
 export type MessageState = "SENDING" | "SENT" | "DELIVERED" | "SEEN";
-export type MessageType = "TEXT" | "IMAGE" | "VIDEO" | "FILE" | "AUDIO" | "VOICE";
+export type MessageType = "TEXT" | "IMAGE" | "VIDEO" | "FILE" | "AUDIO" | "VOICE" | "NOTIFICATION" | "SYSTEM";
 
 export interface ChatMessage {
   id: string;
@@ -59,9 +59,13 @@ export interface ChatMessage {
   text?: string;
   image?: string;
   mediaUrl?: string;
+  fileName?: string;
   time: string;
+  createdAt?: string;
   type: MessageType;
   state?: MessageState;
   reactions?: Array<{ emoji: string; userId: string; userFullName?: string }>;
   deleted?: boolean;
+  pinned?: boolean;
+  replyTo?: { id: string; content?: string; senderName?: string; mediaUrl?: string; type?: MessageType };
 }

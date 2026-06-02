@@ -22,6 +22,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   /** POST /api/v1/auth/login → trả về AuthResponse (trực tiếp có token) */
   const login = async (email: string, password: string): Promise<AuthResponse> => {
+    // ─── REAL API ─────────────────────────────────────────────────────────────
     const response: AuthResponse = await apiLogin({ email, password });
 
     if (!response?.accessToken) {

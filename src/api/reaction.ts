@@ -1,9 +1,11 @@
 import { fetchAPI } from "@/lib/fetch";
 
 export interface ReactionDto {
+  id?: string;
   emoji: string;
   userId: string;
-  userName?: string;
+  userFullName?: string;
+  createdDate?: string;
 }
 
 export const reactToMessage = async (messageId: string, emoji: string): Promise<ReactionDto[]> => {

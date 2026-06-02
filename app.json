@@ -62,6 +62,14 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {
+        "origin": "https://Zalo.com/"
+      },
+      "eas": {
+        "projectId": "2e0156f6-8783-4fd0-b3ca-5c2bbcc13457"
+      }
     }
   }
 }

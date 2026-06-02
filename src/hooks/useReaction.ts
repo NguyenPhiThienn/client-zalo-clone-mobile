@@ -6,7 +6,13 @@ export const useReactToMessage = (chatId: string) => {
   return useMutation({
     mutationFn: ({ messageId, emoji }: { messageId: string; emoji: string }) =>
       reactToMessage(messageId, emoji),
-    onSuccess: () => {
+    onSuccess: (data, variables) => {
+      queryClient.setQueryData(["messages", chatId, 0], (oldMessages: any[] | undefined) => {
+        if (!oldMessages) return oldMessages;
+        return oldMessages.map((m: any) =>
+          m.id === variables.messageId ? { ...m, reactions: data } : m
+        );
+      });
       queryClient.invalidateQueries({ queryKey: ["messages", chatId] });
     },
   });
@@ -30,7 +36,13 @@ export const useReactToGroupMessage = (groupId: string) => {
         });
       });
     },
-    onSuccess: () => {
+    onSuccess: (data, variables) => {
+      queryClient.setQueryData(['group-messages', groupId, 0], (oldMessages: any[] | undefined) => {
+        if (!oldMessages) return oldMessages;
+        return oldMessages.map((m: any) =>
+          m.id === variables.messageId ? { ...m, reactions: data } : m
+        );
+      });
       queryClient.invalidateQueries({ queryKey: ['group-messages', groupId, 0] });
     },
     onError: () => {

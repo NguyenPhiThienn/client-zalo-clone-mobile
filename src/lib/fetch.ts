@@ -52,7 +52,7 @@ export const fetchAPI = async (url: string, options?: RequestInit) => {
             const errorText = await response.text();
             console.warn(`⚠️ [fetchAPI] HTTP ${response.status}:`, errorText);
 
-            if (response.status === 401) {
+            if (response.status === 401 && !url.includes('/auth/')) {
                 console.warn("🚨 [fetchAPI] 401 Unauthorized detected! Token expired or replaced. Logging out...");
                 
                 // Show notification BEFORE logging out
@@ -67,7 +67,13 @@ export const fetchAPI = async (url: string, options?: RequestInit) => {
                   }
                 );
             }
-            throw new Error(`Lỗi HTTP! trạng thái: ${response.status} - ${errorText.substring(0, 200)}`);
+            // Parse error message for custom errors like incorrect credentials
+            let parsedError = errorText;
+            try {
+                const jsonObj = JSON.parse(errorText);
+                parsedError = jsonObj.error || jsonObj.message || errorText;
+            } catch (e) {}
+            throw new Error(parsedError);
         }
 
         const text = await response.text();

@@ -188,6 +188,12 @@ const ProfileScreen = () => {
               onPress={() => setShowPasswordModal(true)}
             />
             <Divider />
+            <MenuItem
+              icon="shield-outline"
+              label="Danh sách chặn"
+              onPress={() => router.push("/(root)/blocked-list" as any)}
+            />
+            <Divider />
             <MenuItem icon="notifications-outline" label="Thông báo" onPress={() => showAlert("Thông báo", "Đang phát triển")} />
             <Divider />
             <MenuItem icon="shield-checkmark-outline" label="Quyền riêng tư" onPress={() => showAlert("Bảo mật", "Đang phát triển")} />

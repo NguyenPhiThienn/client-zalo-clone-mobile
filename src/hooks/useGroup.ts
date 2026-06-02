@@ -4,8 +4,10 @@ import {
   getGroupById, getGroupMessages, recallGroupMessage, deleteGroupMessageForMe,
   updateGroup, uploadGroupAvatar, addGroupMembers, removeGroupMember,
   setGroupAdmin, leaveGroup, dissolveGroup,
+  pinGroupMessage, unpinGroupMessage, getPinnedGroupMessages, getGroupMedia,
+  getJoinRequests, approveJoinRequest, rejectJoinRequest, createJoinRequests,
+  GroupMessageDto
 } from "@/api/group";
-import { MessageDto } from "@/api/message";
 import { useAuthStore } from "@/store";
 
 export const useMyGroups = () => {
@@ -36,7 +38,7 @@ export const useGroupMessages = (groupId: string | null, page = 0, size = 30) =>
 export const useSendGroupMessage = (groupId: string) => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (payload: Partial<MessageDto>) => sendGroupMessage(groupId, payload),
+    mutationFn: (payload: { content?: string; type?: string; mentionedUserIds?: string[]; mentionAll?: boolean; replyToId?: string; replyTo?: any }) => sendGroupMessage(groupId, payload),
     onMutate: async (payload) => {
       const user = useAuthStore.getState().user;
       const tempId = 'temp-' + Date.now();
@@ -61,15 +63,17 @@ export const useSendGroupMessage = (groupId: string) => {
       // 2. Chèn tin nhắn tạm vào danh sách
       queryClient.setQueryData(["group-messages", groupId, 0], (old: any[] | undefined) => {
         const current = old || [];
-        const newMessage = {
+        const newMessage: GroupMessageDto = {
           id: tempId,
           content: payload.content,
           senderId: (user as any)?.id,
           senderName: (user as any)?.name || "Bạn",
-          createdAt: new Date().toISOString(),
-          state: 'SENDING',
-          type: payload.type || 'TEXT',
-          deleted: false
+          createdDate: new Date().toISOString(),
+          type: (payload.type as any) || 'TEXT',
+          deleted: false,
+          pinned: false,
+          reactions: [],
+          replyTo: (payload as any).replyTo,
         };
         return [newMessage, ...current];
       });
@@ -90,7 +94,7 @@ export const useSendGroupMessage = (groupId: string) => {
 export const useUploadGroupMedia = (groupId: string) => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (data: { formData: FormData, localUri: string, fileType: string, fileName: string }) =>
+    mutationFn: (data: { formData: FormData, localUri: string, fileType: string, fileName: string, replyTo?: any }) =>
       uploadGroupMedia(groupId, data.formData),
     onMutate: async (variables) => {
       const user = useAuthStore.getState().user;
@@ -117,16 +121,18 @@ export const useUploadGroupMedia = (groupId: string) => {
       queryClient.setQueryData(["group-messages", groupId, 0], (old: any[] | undefined) => {
         const current = old || [];
         const isImage = variables.fileType.startsWith('image');
-        const newMessage = {
+        const newMessage: GroupMessageDto = {
           id: tempId,
           content: variables.fileName,
           mediaUrl: variables.localUri,
           senderId: (user as any)?.id,
           senderName: (user as any)?.name || "Bạn",
-          createdAt: new Date().toISOString(),
-          state: 'SENDING',
-          type: isImage ? 'IMAGE' : (variables.fileType.startsWith('video') ? 'VIDEO' : 'FILE'),
-          deleted: false
+          createdDate: new Date().toISOString(),
+          type: (isImage ? 'IMAGE' : (variables.fileType.startsWith('video') ? 'VIDEO' : 'FILE')) as any,
+          deleted: false,
+          pinned: false,
+          reactions: [],
+          replyTo: variables.replyTo,
         };
         return [newMessage, ...current];
       });
@@ -250,5 +256,76 @@ export const useDissolveGroup = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["groups"] });
     },
+  });
+};
+
+export const usePinnedGroupMessages = (groupId: string) => {
+  return useQuery({
+    queryKey: ["pinned-messages", groupId],
+    queryFn: () => getPinnedGroupMessages(groupId),
+    enabled: !!groupId,
+  });
+};
+
+export const usePinGroupMessage = (groupId: string) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (messageId: string) => pinGroupMessage(groupId, messageId),
+    onSuccess: (data) => {
+      queryClient.setQueryData(["pinned-messages", groupId], data);
+    },
+  });
+};
+
+export const useUnpinGroupMessage = (groupId: string) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (messageId: string) => unpinGroupMessage(groupId, messageId),
+    onSuccess: (data) => {
+      queryClient.setQueryData(["pinned-messages", groupId], data);
+    },
+  });
+};
+
+export const useGroupMedia = (groupId: string) => {
+  return useQuery({
+    queryKey: ["group-media", groupId],
+    queryFn: () => getGroupMedia(groupId),
+    enabled: !!groupId,
+  });
+};
+
+export const useJoinRequests = (groupId: string) => {
+  return useQuery({
+    queryKey: ["join-requests", groupId],
+    queryFn: () => getJoinRequests(groupId),
+    enabled: !!groupId,
+  });
+};
+
+export const useApproveJoinRequest = (groupId: string) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (requestId: string) => approveJoinRequest(groupId, requestId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["join-requests", groupId] });
+      queryClient.invalidateQueries({ queryKey: ["group", groupId] });
+    },
+  });
+};
+
+export const useRejectJoinRequest = (groupId: string) => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (requestId: string) => rejectJoinRequest(groupId, requestId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["join-requests", groupId] });
+    },
+  });
+};
+
+export const useCreateJoinRequests = (groupId: string) => {
+  return useMutation({
+    mutationFn: (userIds: string[]) => createJoinRequests(groupId, userIds),
   });
 };

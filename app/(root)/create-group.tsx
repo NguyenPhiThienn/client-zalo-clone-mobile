@@ -7,6 +7,7 @@ import { useContacts } from "@/hooks/useFriend";
 import { UserDto } from "@/api/user";
 import { createGroup } from "@/api/group";
 import { useQuery } from "@tanstack/react-query";
+import { parseBackendDate } from "@/lib/utils";
 
 const CreateGroupScreen = () => {
     const [groupName, setGroupName] = useState("");
@@ -134,7 +135,10 @@ const CreateGroupScreen = () => {
                                     {item.firstName} {item.lastName}
                                 </Text>
                                 <Text className="text-gray-500 text-[13px] font-Jakarta">
-                                    {item.online ? 'Vừa mới truy cập' : item.lastSeen ? new Date(item.lastSeen).toLocaleDateString() : '1 ngày trước'}
+                                    {item.online ? 'Vừa mới truy cập' : item.lastSeen ? (() => {
+                                        const parsed = parseBackendDate(item.lastSeen);
+                                        return parsed ? parsed.toLocaleDateString('vi-VN') : '1 ngày trước';
+                                    })() : '1 ngày trước'}
                                 </Text>
                             </View>
                             <View className={`w-[22px] h-[22px] rounded-full border items-center justify-center ${isSelected ? 'border-[#0068FF] bg-[#0068FF]' : 'border-gray-400 bg-white'}`}>

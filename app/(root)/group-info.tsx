@@ -10,13 +10,29 @@ import { router, useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import {
   useGroupById, useUpdateGroup, useUploadGroupAvatar,
-  useAddGroupMembers, useRemoveGroupMember, useSetGroupAdmin,
-  useLeaveGroup, useDissolveGroup
+  useAddGroupMembers, useRemoveGroupMember as useRemoveMember, useSetGroupAdmin,
+  useLeaveGroup, useDissolveGroup, useCreateJoinRequests,
+  useJoinRequests, useApproveJoinRequest, useRejectJoinRequest
 } from '@/hooks/useGroup';
+import { useSummarizeGroup } from '@/hooks/useAi';
+import ReportModal from '@/components/ReportModal';
 import { getMemberName } from '@/api/group';
 import { useAuth } from '@/context/AuthContext';
-import { getAvatarUrl } from '@/lib/utils';
+import { getAvatarUrl, parseBackendDate } from '@/lib/utils';
 import { useContacts } from '@/hooks/useFriend';
+
+export interface GroupJoinRequestDto {
+  id: string;
+  groupId: string;
+  requestedById: string;
+  requestedByName: string;
+  requestedByAvatarUrl: string | null;
+  targetUserId: string;
+  targetUserName: string;
+  targetUserAvatarUrl: string | null;
+  status: "PENDING" | "APPROVED" | "REJECTED";
+  createdDate: string;
+}
 
 export default function GroupInfoScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -31,10 +47,27 @@ export default function GroupInfoScreen() {
   const { mutate: updateName, isPending: updatingName } = useUpdateGroup(id);
   const { mutate: uploadAvatar, isPending: uploadingAvatar } = useUploadGroupAvatar(id);
   const { mutate: addMembers, isPending: addingMembers } = useAddGroupMembers(id);
-  const { mutate: removeMember } = useRemoveGroupMember(id);
+  const { mutate: createJoinRequests, isPending: creatingRequests } = useCreateJoinRequests(id);
+  const { data: requests, refetch: refetchRequests } = useJoinRequests(id);
+  const { mutate: approveRequest } = useApproveJoinRequest(id);
+  const { mutate: rejectRequest } = useRejectJoinRequest(id);
+
+  const { mutate: removeMember } = useRemoveMember(id);
   const { mutate: setAdmin } = useSetGroupAdmin(id);
   const { mutate: leaveGroup, isPending: leaving } = useLeaveGroup();
   const { mutate: dissolveGroup, isPending: dissolving } = useDissolveGroup();
+
+  const [summaryData, setSummaryData] = useState<any>(null);
+  const [showReport, setShowReport] = useState(false);
+  const { mutate: summarize, isPending: summarizing } = useSummarizeGroup();
+
+  const handleSummarize = () => {
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    summarize({ groupId: id, since }, {
+      onSuccess: (data) => setSummaryData(data),
+      onError: () => Alert.alert('Lỗi', 'Không thể tạo tóm tắt'),
+    });
+  };
 
   // BE trả về isAdmin trực tiếp trong GroupDto
   const isAdmin = group?.isAdmin ?? false;
@@ -204,10 +237,54 @@ export default function GroupInfoScreen() {
         {/* Nút hành động nhanh */}
         <View style={styles.quickActions}>
           <QuickAction icon="chatbubble-outline" label="Nhắn tin" onPress={() => router.back()} />
-          {isAdmin && (
-            <QuickAction icon="person-add-outline" label="Thêm thành viên" onPress={() => setShowAddMember(true)} />
-          )}
+          <QuickAction
+            icon="sparkles-outline"
+            label="Tóm tắt AI"
+            onPress={handleSummarize}
+            loading={summarizing}
+          />
+          <QuickAction icon="person-add-outline" label="Thêm" onPress={() => setShowAddMember(true)} />
         </View>
+
+        {/* Yêu cầu phê duyệt (Chỉ Admin thấy) */}
+        {isAdmin && requests && requests.length > 0 && (
+          <View style={[styles.section, { backgroundColor: '#F0F9FF', borderLeftWidth: 4, borderLeftColor: '#0068FF' }]}>
+            <Text style={[styles.sectionTitle, { color: '#0068FF' }]}>Yêu cầu phê duyệt ({requests.length})</Text>
+            {requests.map((req) => (
+              <View key={req.id} style={styles.requestRow}>
+                <Image
+                  source={{ uri: getAvatarUrl(req.targetUserName, req.targetUserAvatarUrl) }}
+                  style={styles.memberAvatar}
+                />
+                <View style={{ flex: 1, marginRight: 8 }}>
+                  <Text style={styles.requestMainText}>
+                    <Text style={{ fontFamily: 'Jakarta-Bold' }}>{req.requestedByName}</Text> mời <Text style={{ fontFamily: 'Jakarta-Bold' }}>{req.targetUserName}</Text>
+                  </Text>
+                  <Text style={{ fontSize: 11, color: '#6B7280', marginTop: 2 }}>
+                    Vào {(() => {
+                      const parsed = parseBackendDate(req.createdDate);
+                      return parsed ? parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+                    })()}
+                  </Text>
+                </View>
+                <View style={{ flexDirection: 'row', gap: 6 }}>
+                  <TouchableOpacity 
+                    onPress={() => approveRequest(req.id, { onSuccess: () => { refetch(); refetchRequests(); } })}
+                    style={styles.approveBtnSmall}
+                  >
+                    <Text style={styles.btnTextSmall}>Duyệt</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity 
+                    onPress={() => rejectRequest(req.id, { onSuccess: () => { refetchRequests(); } })}
+                    style={styles.rejectBtnSmall}
+                  >
+                    <Ionicons name="close" size={16} color="#EF4444" />
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ))}
+          </View>
+        )}
 
         {/* Danh sách thành viên */}
         <View style={styles.section}>
@@ -276,8 +353,59 @@ export default function GroupInfoScreen() {
               <Text style={[styles.dangerText, { color: '#4B5563' }]}>{dissolving ? 'Đang giải tán...' : 'Giải tán nhóm'}</Text>
             </TouchableOpacity>
           )}
+
+          <TouchableOpacity
+            style={[styles.dangerBtn, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#F3F4F6', marginTop: 12, paddingTop: 12 }]}
+            onPress={() => setShowReport(true)}
+          >
+            <View style={[styles.actionBtn, { backgroundColor: '#FEF3C7', marginRight: 12 }]}>
+              <Ionicons name="warning-outline" size={22} color="#F59E0B" />
+            </View>
+            <Text style={[styles.dangerText, { color: '#F59E0B' }]}>Tố cáo nhóm</Text>
+          </TouchableOpacity>
         </View>
       </ScrollView>
+
+      {/* Modal hiển thị tóm tắt AI */}
+      <Modal visible={!!summaryData} animationType="fade" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.summaryBox}>
+            <View style={styles.summaryHeader}>
+              <Ionicons name="sparkles" size={24} color="#0068FF" />
+              <Text style={styles.summaryTitle}>Tóm tắt hội thoại (24h)</Text>
+              <TouchableOpacity onPress={() => setSummaryData(null)}>
+                <Ionicons name="close" size={24} color="#9CA3AF" />
+              </TouchableOpacity>
+            </View>
+            <ScrollView style={{ maxHeight: 400 }}>
+              <Text style={styles.summaryBody}>{summaryData?.summary}</Text>
+
+              <View style={styles.summaryDivider} />
+
+              <View style={styles.summaryMetaRow}>
+                <Ionicons name="chatbubbles-outline" size={16} color="#6B7280" />
+                <Text style={styles.summaryMetaText}>Tổng số tin nhắn: {summaryData?.messageCount}</Text>
+              </View>
+
+              <Text style={[styles.summaryLabel, { marginTop: 12 }]}>Thành viên tích cực:</Text>
+              <View style={styles.speakerList}>
+                {(summaryData?.topSpeakers || []).map((s: string, i: number) => (
+                  <View key={i} style={styles.speakerItem}>
+                    <Text style={styles.speakerText}>{s}</Text>
+                  </View>
+                ))}
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      <ReportModal
+        visible={showReport}
+        onClose={() => setShowReport(false)}
+        targetId={id}
+        type="GROUP"
+      />
 
       {/* Modal thêm thành viên */}
       <AddMemberModal
@@ -285,12 +413,19 @@ export default function GroupInfoScreen() {
         friends={friendsNotInGroup}
         onClose={() => setShowAddMember(false)}
         onAdd={(ids) => {
-          addMembers(ids, {
-            onSuccess: () => { setShowAddMember(false); refetch(); Alert.alert('Thành công', 'Đã thêm thành viên'); },
-            onError: (err) => Alert.alert('Lỗi', err.message || 'Không thể thêm thành viên'),
-          });
+          if (isAdmin) {
+            addMembers(ids, {
+              onSuccess: () => { setShowAddMember(false); refetch(); Alert.alert('Thành công', 'Đã thêm thành viên'); },
+              onError: (err: any) => Alert.alert('Lỗi', err.message || 'Không thể thêm thành viên'),
+            });
+          } else {
+            createJoinRequests(ids, {
+              onSuccess: () => { setShowAddMember(false); Alert.alert('Đã gửi yêu cầu', 'Yêu cầu của bạn đã được gửi tới trưởng nhóm duyệt.'); },
+              onError: (err: any) => Alert.alert('Lỗi', err.message || 'Không thể gửi yêu cầu'),
+            });
+          }
         }}
-        isPending={addingMembers}
+        isPending={addingMembers || creatingRequests}
       />
     </View>
   );
@@ -298,9 +433,11 @@ export default function GroupInfoScreen() {
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-const QuickAction = ({ icon, label, onPress }: { icon: any; label: string; onPress: () => void }) => (
-  <TouchableOpacity style={styles.quickBtn} onPress={onPress}>
-    <View style={styles.quickIcon}><Ionicons name={icon} size={22} color="#0068FF" /></View>
+const QuickAction = ({ icon, label, onPress, loading }: { icon: any; label: string; onPress: () => void; loading?: boolean }) => (
+  <TouchableOpacity style={styles.quickBtn} onPress={onPress} disabled={loading}>
+    <View style={styles.quickIcon}>
+      {loading ? <ActivityIndicator size="small" color="#0068FF" /> : <Ionicons name={icon} size={22} color="#0068FF" />}
+    </View>
     <Text style={styles.quickLabel}>{label}</Text>
   </TouchableOpacity>
 );
@@ -447,4 +584,106 @@ const styles = StyleSheet.create({
   actionBtn: { width: 34, height: 34, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
   dangerBtn: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, gap: 12 },
   dangerText: { fontSize: 15, fontFamily: 'Jakarta-Medium', color: '#EF4444' },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  summaryBox: {
+    backgroundColor: 'white',
+    borderRadius: 16,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  summaryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+    gap: 8,
+  },
+  summaryTitle: {
+    flex: 1,
+    fontSize: 18,
+    fontFamily: 'Jakarta-Bold',
+    color: '#1F2937',
+  },
+  summaryBody: {
+    fontSize: 15,
+    lineHeight: 22,
+    color: '#374151',
+    fontFamily: 'Jakarta',
+  },
+  summaryDivider: {
+    height: 1,
+    backgroundColor: '#E5E7EB',
+    marginVertical: 16,
+  },
+  summaryMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  summaryMetaText: {
+    fontSize: 13,
+    color: '#6B7280',
+    fontFamily: 'Jakarta-Medium',
+  },
+  summaryLabel: {
+    fontSize: 14,
+    fontFamily: 'Jakarta-Bold',
+    color: '#4B5563',
+    marginBottom: 8,
+  },
+  speakerList: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  speakerItem: {
+    backgroundColor: '#F3F4F6',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  speakerText: {
+    fontSize: 12,
+    color: '#4B5563',
+    fontFamily: 'Jakarta-Medium',
+  },
+  requestRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: '#BAE6FD',
+  },
+  requestMainText: {
+    fontSize: 13,
+    color: '#1E293B',
+    lineHeight: 18,
+  },
+  approveBtnSmall: {
+    backgroundColor: '#0068FF',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+  },
+  rejectBtnSmall: {
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  btnTextSmall: {
+    color: 'white',
+    fontSize: 12,
+    fontFamily: 'Jakarta-Bold',
+  },
 });

@@ -9,7 +9,7 @@ import {
   useAcceptFriendRequest,
   useRejectFriendRequest
 } from "@/hooks/useFriend";
-import { getAvatarUrl, formatFullName } from "@/lib/utils";
+import { getAvatarUrl, formatFullName, parseBackendDate } from "@/lib/utils";
 import { StatusBar } from "expo-status-bar";
 
 export default function FriendRequestsScreen() {
@@ -73,7 +73,10 @@ export default function FriendRequestsScreen() {
                     <TouchableOpacity onPress={() => router.push({ pathname: "/(root)/user/[id]", params: { id: item.senderId } })}>
                       <Text className="text-base font-JakartaMedium">{name}</Text>
                     </TouchableOpacity>
-                    <Text className="text-xs text-gray-400 mt-1">{new Date(item.createdDate).toLocaleDateString()}</Text>
+                    <Text className="text-xs text-gray-400 mt-1">{(() => {
+                      const parsed = parseBackendDate(item.createdDate);
+                      return parsed ? parsed.toLocaleDateString('vi-VN') : '';
+                    })()}</Text>
                     <View className="flex-row gap-2 mt-2">
                       <TouchableOpacity
                         disabled={accepting || rejecting}

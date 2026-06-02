@@ -13,6 +13,8 @@ export interface UserDto {
   role: string;
   banned: boolean;
   avatarUrl?: string;
+  friendshipStatus?: "NONE" | "PENDING_SENT" | "PENDING_RECEIVED" | "ACCEPTED";
+  blockStatus?: "NONE" | "BLOCKED_BY_ME" | "BLOCKED_BY_THEM";
 }
 
 export interface UpdateProfilePayload {
@@ -65,3 +67,23 @@ export const uploadAvatar = async (formData: FormData): Promise<UserDto> => {
 export const searchUsers = async (keyword: string): Promise<UserDto[]> => {
   return fetchAPI(`/user/search?keyword=${encodeURIComponent(keyword)}`);
 };
+
+/** POST /api/v1/user/block/{userId} — Chặn người dùng */
+export const blockUser = async (userId: string): Promise<void> => {
+  await fetchAPI(`/user/block/${userId}`, {
+    method: "POST",
+  });
+};
+
+/** DELETE /api/v1/user/block/{userId} — Bỏ chặn người dùng */
+export const unblockUser = async (userId: string): Promise<void> => {
+  await fetchAPI(`/user/block/${userId}`, {
+    method: "DELETE",
+  });
+};
+
+/** GET /api/v1/user/block — Danh sách người dùng bị chặn */
+export const getBlockedUsers = async (): Promise<UserDto[]> => {
+  return fetchAPI("/user/block");
+};
+

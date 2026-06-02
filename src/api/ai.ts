@@ -7,6 +7,18 @@ export interface AiMessageDto {
   createdDate: string;
 }
 
+export interface SmartReplyResponse {
+  suggestions: string[];
+}
+
+export interface SummarizeResponse {
+  summary: string;
+  messageCount: number;
+  topSpeakers: string[];
+  from: string;
+  to: string;
+}
+
 export const chatWithAi = async (message: string): Promise<AiMessageDto> => {
   return fetchAPI("/ai/chat", {
     method: "POST",
@@ -23,3 +35,30 @@ export const clearAiHistory = async (): Promise<void> => {
     method: "DELETE",
   });
 };
+
+export const getGroupSmartReplies = async (groupId: string): Promise<SmartReplyResponse> => {
+  return fetchAPI(`/group/${groupId}/ai/smart-reply`, {
+    method: "POST",
+  });
+};
+
+export const summarizeGroupMessages = async (groupId: string, since: string): Promise<SummarizeResponse> => {
+  return fetchAPI(`/group/${groupId}/ai/summarize`, {
+    method: "POST",
+    body: JSON.stringify({ since }),
+  });
+};
+
+export const getChatSmartReplies = async (chatId: string): Promise<SmartReplyResponse> => {
+  return fetchAPI(`/chat/${chatId}/ai/smart-reply`, {
+    method: "POST",
+  });
+};
+
+export const summarizeChatMessages = async (chatId: string, since: string): Promise<SummarizeResponse> => {
+  return fetchAPI(`/chat/${chatId}/ai/summarize`, {
+    method: "POST",
+    body: JSON.stringify({ since }),
+  });
+};
+

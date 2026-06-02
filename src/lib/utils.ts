@@ -4,6 +4,33 @@ import { formatInTimeZone } from 'date-fns-tz';
 
 const VIETNAM_TIMEZONE = 'Asia/Ho_Chi_Minh';
 
+/**
+ * Parse date từ backend — xử lý 2 format:
+ * 1. ISO string: "2026-06-02T08:35:01.123456" (không có timezone → BE trả UTC hoặc local)
+ * 2. Jackson array: [2026, 6, 2, 8, 35, 1, 123456789] (LocalDateTime serialized as array)
+ * Trả về Date object đúng múi giờ.
+ */
+export function parseBackendDate(raw: any): Date | null {
+  if (!raw) return null;
+
+  // Format array: [year, month (1-indexed), day, hour, minute, second, nano?]
+  if (Array.isArray(raw)) {
+    const [year, month, day, hour = 0, min = 0, sec = 0] = raw;
+    // new Date(year, month-1, ...) → local timezone (Vietnam khi chạy trên thiết bị VN)
+    return new Date(year, month - 1, day, hour, min, sec);
+  }
+
+  // Format ISO string — thêm 'Z' nếu chưa có timezone suffix để đảm bảo parse đúng UTC
+  if (typeof raw === 'string') {
+    const hasTimezone = raw.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(raw);
+    const iso = hasTimezone ? raw : raw + 'Z';
+    const d = new Date(iso);
+    return isNaN(d.getTime()) ? null : d;
+  }
+
+  return null;
+}
+
 /** Format duration in minutes to human-readable string */
 export function formatTime(minutes: number): string {
   const formattedMinutes = Math.round(minutes) || 0;
@@ -60,10 +87,11 @@ export function formatFullName(firstName?: string, lastName?: string): string {
   return `${firstName || ''} ${lastName || ''}`.trim() || 'Người dùng';
 }
 
-/** Generate DiceBear avatar URL from a seed string */
+/** Generate Initials avatar URL from a seed string (handles numbers & text better) */
 export function getAvatarUrl(seed: string, fallback?: string | null): string {
   if (fallback) return getImageUrl(fallback) || fallback;
-  return `https://api.dicebear.com/9.x/avataaars/png?seed=${encodeURIComponent(seed)}`;
+  // Sử dụng UI-Avatars để hỗ trợ tốt nhất cho cả tên bằng số và chữ, đồng bộ màu xanh Zalo
+  return `https://ui-avatars.com/api/?name=${encodeURIComponent(seed)}&background=0068ff&color=fff&size=128&bold=true`;
 }
 
 const S3_BASE_URL = "https://zaloclone-storage.s3.ap-southeast-1.amazonaws.com";

@@ -14,7 +14,7 @@ import { useChats } from "@/hooks/useChat";
 import { useMyGroups } from "@/hooks/useGroup";
 import { ChatDto } from "@/api/chat";
 import { GroupDto } from "@/api/group";
-import { getAvatarUrl } from "@/lib/utils";
+import { getAvatarUrl, parseBackendDate } from "@/lib/utils";
 
 const ConversationList = () => {
   const { data: chats, isLoading: loadingChats, refetch: refetchChats, isRefetching: refetchingChats } = useChats();
@@ -41,8 +41,10 @@ const ConversationList = () => {
     ];
 
     return [...list].sort((a, b) => { // Dùng [...list] để đảm bảo mảng mới hoàn toàn
-      const timeA = new Date((a as any).lastMessageTime || 0).getTime();
-      const timeB = new Date((b as any).lastMessageTime || 0).getTime();
+      const dateA = parseBackendDate((a as any).lastMessageTime);
+      const dateB = parseBackendDate((b as any).lastMessageTime);
+      const timeA = dateA ? dateA.getTime() : 0;
+      const timeB = dateB ? dateB.getTime() : 0;
       return timeB - timeA;
     });
   }, [chats, groups]);
@@ -62,9 +64,10 @@ const ConversationList = () => {
     return lastMessage;
   };
 
-  const formatTime = (iso?: string): string => {
+  const formatTime = (iso?: any): string => {
     if (!iso) return "";
-    const d = new Date(iso);
+    const d = parseBackendDate(iso);
+    if (!d) return "";
     const now = new Date();
     const diffDays = Math.floor((now.getTime() - d.getTime()) / (1000 * 60 * 60 * 24));
     if (diffDays === 0) return d.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit" });

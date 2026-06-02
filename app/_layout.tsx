@@ -13,6 +13,7 @@ import "@/lib/i18n";
 import { AuthProvider } from "@/context/AuthContext";
 import { SocketProvider } from "@/context/SocketContext";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import FlashMessage from "react-native-flash-message";
 
 const queryClient = new QueryClient();
 
@@ -55,6 +56,7 @@ export default function RootLayout() {
           </SocketProvider>
         </AuthProvider>
       </QueryClientProvider>
+      <FlashMessage position="top" />
     </GestureHandlerRootView>
   );
 }
