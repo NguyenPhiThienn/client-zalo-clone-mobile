@@ -59,71 +59,90 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
             time = new Date().toISOString();
         }
 
-        // 1. Cập nhật HOME LIST
-        queryClient.setQueryData(listKey, (oldList: any[] | undefined) => {
-            const currentUser = useAuthStore.getState().user;
-            const isMe = senderId && currentUser && senderId === (currentUser as any).id;
-            const isNotMe = !isMe;
-            const shouldIncrement = isNotMe && (activeChatIdRef.current !== chatId);
+        const currentUser = useAuthStore.getState().user;
+        const isMe = senderId && currentUser && senderId === (currentUser as any).id;
+        const isNotMe = !isMe;
+        const shouldIncrement = isNotMe && (activeChatIdRef.current !== chatId);
 
-            const chatEntry = (item: any) => ({
-                ...item,
-                lastMessage: deleted ? "Tin nhắn đã bị thu hồi" : (content || "[Hình ảnh/Video]"),
-                lastMessageType: type || 'TEXT',
-                lastMessageTime: time,
-                lastMessageSenderName: isMe ? "Bạn" : (senderName || ""),
-                unreadCount: (item.unreadCount || 0) + (shouldIncrement ? 1 : 0),
-                _sortOrder: nextSortOrder(),
-            });
-
-            if (oldList) {
-                const newList = [...oldList];
-                const index = newList.findIndex((item: any) => item.id === chatId);
-                if (index !== -1) {
-                    const updated = chatEntry(newList[index]);
-                    newList.splice(index, 1);
-                    newList.unshift(updated);
-                    return newList;
-                }
-            }
-
-            // Chat mới chưa có trong list → gọi getChatById rồi chèn vào cache
-            console.log('[DEBUG] updateCache: chat mới, oldList:', oldList ? oldList.length : 'undefined', '| chatId:', chatId);
-            getChatById(chatId).then((chatDto) => {
-                console.log('[DEBUG] getChatById success:', chatDto ? chatDto.id : 'null');
-                const newChat = chatEntry({
-                    ...chatDto,
-                    unreadCount: 0,
-                });
-
-                queryClient.setQueryData(['chats'], (old: any[] | undefined) => {
-                    console.log('[DEBUG] setQueryData chats (new chat):', old ? old.length : 'undefined');
-                    const list = old ? [...old] : [];
-                    if (list.some(c => c.id === chatId)) return list;
-                    return [newChat, ...list];
-                });
-
-                // Subscribe topic của chat mới để nhận state changes (Delivered/Seen)
-                if (clientRef.current?.connected) {
-                    clientRef.current.subscribe(`/topic/chat/${chatId}`, (msg) => {
-                        const data = JSON.parse(msg.body);
-                        if (data.newState && !data.id) {
-                            const senderIdStr = data.messageSenderId
-                                ? (typeof data.messageSenderId === 'string' ? data.messageSenderId : String(data.messageSenderId))
-                                : undefined;
-                            updateMessageStatusInCache(chatId, data.newState, false, senderIdStr);
-                        }
-                    });
-                }
-            }).catch(() => {
-                // Fallback: invalidate nếu API lỗi
-                queryClient.invalidateQueries({ queryKey: ['chats'] });
-            });
-
-            // Trả về list hiện tại để React Query không revert cache
-            // (chat mới sẽ được thêm vào async qua then() bên trên)
-            return oldList ? [...oldList] : [];
+        // Hàm tạo chat entry với last message mới nhất — PURE function, không side effects
+        const makeChatEntry = (item: any) => ({
+            ...item,
+            lastMessage: deleted ? "Tin nhắn đã bị thu hồi" : (content || "[Hình ảnh/Video]"),
+            lastMessageType: type || 'TEXT',
+            lastMessageTime: time,
+            lastMessageSenderName: isMe ? "Bạn" : (senderName || ""),
+            unreadCount: (item.unreadCount || 0) + (shouldIncrement ? 1 : 0),
+            _sortOrder: nextSortOrder(),
         });
+
+        // 1. Cập nhật HOME LIST
+        // Đọc cache đồng bộ TRƯỚC để tránh side effects bên trong setQueryData updater
+        const currentList: any[] | undefined = queryClient.getQueryData(listKey);
+        const existingIndex = currentList ? currentList.findIndex((item: any) => item.id === chatId) : -1;
+
+        if (existingIndex !== -1 && currentList) {
+            // Chat đã có → cập nhật tại chỗ và đưa lên đầu (pure update)
+            queryClient.setQueryData(listKey, (old: any[] | undefined) => {
+                if (!old) return old;
+                const list = [...old];
+                const idx = list.findIndex((item: any) => item.id === chatId);
+                if (idx === -1) return old;
+                const updated = makeChatEntry(list[idx]);
+                list.splice(idx, 1);
+                list.unshift(updated);
+                return list;
+            });
+        } else {
+            // Chat CHƯA có trong list → fetch thông tin rồi chèn vào (async, ngoài updater)
+            console.log('[DEBUG] updateCache: chat mới, listLength:', currentList ? currentList.length : 'undefined', '| chatId:', chatId);
+
+            const fetchAndInsertChat = (retryCount: number = 0) => {
+                getChatById(chatId).then((chatDto) => {
+                    console.log('[DEBUG] getChatById success (attempt', retryCount + 1, '):', chatDto?.id);
+                    const newChatEntry = makeChatEntry({
+                        ...chatDto,
+                        unreadCount: shouldIncrement ? 1 : 0,
+                    });
+
+                    queryClient.setQueryData(listKey, (old: any[] | undefined) => {
+                        const list = old ? [...old] : [];
+                        if (list.some((c: any) => c.id === chatId)) {
+                            // Đã có (do startOrGetChat thêm vào trước) → chỉ update last message
+                            return list.map((c: any) => c.id === chatId ? makeChatEntry(c) : c);
+                        }
+                        return [newChatEntry, ...list];
+                    });
+
+                    // Subscribe topic chat mới để nhận Delivered/Seen updates
+                    if (clientRef.current?.connected && !subscribedChatsRef.current.has(chatId)) {
+                        const sub = clientRef.current.subscribe(`/topic/chat/${chatId}`, (msg) => {
+                            const data = JSON.parse(msg.body);
+                            if (data.newState && !data.id) {
+                                const senderIdStr = data.messageSenderId
+                                    ? (typeof data.messageSenderId === 'string' ? data.messageSenderId : String(data.messageSenderId))
+                                    : undefined;
+                                updateMessageStatusInCache(chatId, data.newState, false, senderIdStr);
+                            }
+                        });
+                        subscribedChatsRef.current.add(chatId);
+                        subscriptionsRef.current[`chat-${chatId}`] = sub;
+                        console.log(`[Socket] 📡 Subscribed to new chat topic: ${chatId}`);
+                    }
+                }).catch((err) => {
+                    if (retryCount < 2) {
+                        // Retry sau 1.5s — đợi BE transaction commit xong
+                        console.warn('[DEBUG] getChatById failed (attempt', retryCount + 1, '), retry in 1500ms. chatId:', chatId, 'err:', err?.message);
+                        setTimeout(() => fetchAndInsertChat(retryCount + 1), 1500);
+                    } else {
+                        // Sau 2 lần retry → invalidate để force refetch từ server
+                        console.warn('[DEBUG] getChatById failed after 3 attempts, invalidating [chats]. chatId:', chatId);
+                        queryClient.invalidateQueries({ queryKey: ['chats'] });
+                    }
+                });
+            };
+
+            fetchAndInsertChat(0);
+        }
 
         // 2. Cập nhật CHI TIẾT
         queryClient.setQueryData(detailKey, (oldMessages: any[] | undefined) => {
@@ -195,7 +214,6 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
 
         // 3. THÔNG BÁO (Nếu không phải chat đang mở)
         if (activeChatIdRef.current !== chatId && !deleted) {
-            const currentUser = useAuthStore.getState().user;
             if (senderId !== (currentUser as any)?.id) {
                 // Hiển thị Toast trong app
                 showMessage({
@@ -225,7 +243,6 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
 
         // 4. ĐÁNH DẤU ĐÃ XEM NGAY LẬP TỨC (Nếu đang mở chat) — chỉ cho 1-1
         // Nhóm: BE tự clear unread trong getMessages(), không cần gọi API
-        const currentUser = useAuthStore.getState().user;
         const myId = (currentUser as any)?.id;
         if (activeChatIdRef.current === chatId && senderId !== myId && !isGroup) {
           markMessagesAsSeen(chatId).catch(() => { });
@@ -531,9 +548,13 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
                 queryClient.invalidateQueries({ queryKey: ["friend-requests"] });
                 queryClient.invalidateQueries({ queryKey: ["contacts"] });
 
-                // Tự động khởi tạo chat khi đối phương đồng ý kết bạn
+                // Socket này được gửi đến người GỬI lời mời khi người nhận accept.
+                // FriendRequestDto: senderId = người gửi lời mời, receiverId = người vừa accept.
+                // Người nhận socket này là SENDER, bạn mới là RECEIVER → cần chat với receiverId.
                 if (data.receiverId) {
+                    console.log('[Socket] friend-request-accepted → startOrGetChat:', data.receiverId);
                     startOrGetChat(data.receiverId).then((newChat) => {
+                        console.log('[Socket] startOrGetChat success, chatId:', newChat?.id);
                         queryClient.setQueryData(["chats"], (old: any[] | undefined) => {
                             const currentList = old ? [...old] : [];
                             if (currentList.some(c => c.id === newChat.id)) return old;
@@ -543,6 +564,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
                         console.warn('[Socket] Proactive startChat failed:', err);
                     });
                 }
+
 
                 showMessage({
                     message: "Kết bạn thành công",
