@@ -37,7 +37,7 @@ const PinnedMessagesBar = ({ groupId, isAdmin, onScrollToMessage }: PinnedMessag
           Tin nhắn đã ghim {pinnedMessages.length > 1 ? `(${pinnedMessages.length})` : ''}
         </Text>
         <Text style={styles.messageText} numberOfLines={1}>
-          {msg.type === 'SYSTEM' ? msg.content : (msg.content || '[Hình ảnh/Tệp tin]')}
+          {currentPin.type === 'SYSTEM' ? currentPin.content : (currentPin.content || '[Hình ảnh/Tệp tin]')}
         </Text>
       </TouchableOpacity>
 

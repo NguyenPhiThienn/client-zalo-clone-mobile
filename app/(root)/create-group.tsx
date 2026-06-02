@@ -47,7 +47,11 @@ const CreateGroupScreen = () => {
             queryClient.setQueryData(['groups'], (old: any[] | undefined) => {
                 const currentList = old ? [...old] : [];
                 if (currentList.some(g => g.id === group.id)) return old;
-                return [group, ...currentList];
+                const initializedGroup = {
+                    ...group,
+                    lastMessageTime: group.lastMessageTime || new Date().toISOString()
+                };
+                return [initializedGroup, ...currentList];
             });
             Alert.alert("Thành công", "Đã tạo nhóm chat mới");
             router.replace({

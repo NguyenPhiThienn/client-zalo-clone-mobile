@@ -1,5 +1,5 @@
 // components/HomeScreen/ConversationList/index.tsx
-import React from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -10,6 +10,7 @@ import {
   StyleSheet,
 } from "react-native";
 import { router } from "expo-router";
+import { useQueryClient } from "@tanstack/react-query";
 import { useChats } from "@/hooks/useChat";
 import { useMyGroups } from "@/hooks/useGroup";
 import { ChatDto } from "@/api/chat";
@@ -19,20 +20,18 @@ import { getAvatarUrl, parseBackendDate } from "@/lib/utils";
 const ConversationList = () => {
   const { data: chats, isLoading: loadingChats, refetch: refetchChats, isRefetching: refetchingChats } = useChats();
   const { data: groups, isLoading: loadingGroups, refetch: refetchGroups, isRefetching: refetchingGroups } = useMyGroups();
+  const queryClient = useQueryClient();
 
   const isLoading = loadingChats || loadingGroups;
   const isRefetching = refetchingChats || refetchingGroups;
 
-  // Merging and Sorting
-  const allConversations = React.useMemo(() => {
-    console.log(`🖼️ [UI] Re-rendering list. Chats: ${chats?.length || 0}, Groups: ${groups?.length || 0}`);
-    if (chats && chats.length > 0) {
-      console.log(`📝 [UI] Top chat preview: ${chats[0].lastMessage}`);
-    }
+  // Luôn dùng cache trực tiếp làm source of truth — sort trong useMemo để FlatList nhận data mới nhất
+  const [allConversations, setAllConversations] = useState<any[]>([]);
 
+  useEffect(() => {
     const list = [
       ...(chats || []),
-      ...(groups || []).map(g => ({
+      ...(groups || []).map((g: any) => ({
         ...g,
         isGroup: true,
         chatName: g.name,
@@ -40,13 +39,24 @@ const ConversationList = () => {
       }))
     ];
 
-    return [...list].sort((a, b) => { // Dùng [...list] để đảm bảo mảng mới hoàn toàn
+    const sorted = [...list].sort((a, b) => {
+      const sA = (a as any)._sortOrder || 0;
+      const sB = (b as any)._sortOrder || 0;
+
+      // Nếu cả 2 có _sortOrder (đều đã nhận tin nhắn qua Socket) → ưu tiên _sortOrder cao hơn lên trước
+      if (sA !== 0 || sB !== 0) {
+        if (sB !== sA) return sB - sA;
+      }
+
+      // Fallback: sort theo lastMessageTime (cho lần load đầu chưa có _sortOrder)
       const dateA = parseBackendDate((a as any).lastMessageTime);
       const dateB = parseBackendDate((b as any).lastMessageTime);
       const timeA = dateA ? dateA.getTime() : 0;
       const timeB = dateB ? dateB.getTime() : 0;
       return timeB - timeA;
     });
+
+    setAllConversations(sorted);
   }, [chats, groups]);
 
   const handleRefresh = () => {

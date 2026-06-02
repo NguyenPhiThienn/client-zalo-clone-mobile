@@ -11,6 +11,7 @@ import { showMessage } from 'react-native-flash-message';
 import { router } from 'expo-router';
 // @ts-ignore
 import SockJS from 'sockjs-client';
+import { nextSortOrder } from '@/lib/sortCounter';
 
 // @ts-ignore
 setNotificationHandler({
@@ -43,6 +44,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     const queryClient = useQueryClient();
     const chatListeners = useRef<Record<string, ((data: any) => void)[]>>({});
     const activeChatIdRef = useRef<string | null>(null);
+    // NOTE: nextSortOrder() từ sortCounter.ts là source of truth, dùng chung với mutation hooks
 
     useEffect(() => {
         const requestPermissions = async () => {
@@ -82,70 +84,73 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
 
             // 1. Cập nhật HOME LIST
             queryClient.setQueryData(listKey, (oldList: any[] | undefined) => {
-                if (!oldList) return oldList;
-                const newList = [...oldList];
-                const index = newList.findIndex((item: any) => item.id === chatId);
-                if (index !== -1) {
-                    const currentUser = useAuthStore.getState().user;
-                    const isMe = senderId && currentUser && senderId === (currentUser as any).id;
-                    const isNotMe = !isMe;
-                    const shouldIncrement = isNotMe && (activeChatIdRef.current !== chatId);
+                const currentUser = useAuthStore.getState().user;
+                const isMe = senderId && currentUser && senderId === (currentUser as any).id;
+                const isNotMe = !isMe;
+                const shouldIncrement = isNotMe && (activeChatIdRef.current !== chatId);
 
-                    const updated = {
-                        ...newList[index],
-                        lastMessage: deleted ? "Tin nhắn đã bị thu hồi" : (content || "[Hình ảnh/Video]"),
-                        lastMessageType: type || 'TEXT',
-                        lastMessageTime: time,
-                        lastMessageSenderName: isMe ? "Bạn" : (senderName || ""),
-                        unreadCount: (newList[index].unreadCount || 0) + (shouldIncrement ? 1 : 0)
-                    };
-                    newList.splice(index, 1);
-                    newList.unshift(updated);
-                    return newList;
-                } else {
-                    // Chat mới chưa có trong list → gọi getChatById + subscribe + chèn thẳng vào cache
-                    getChatById(chatId).then((chatDto) => {
-                        const time = createdAt;
-                        const newChat = {
-                            ...chatDto,
-                            lastMessage: deleted ? "Tin nhắn đã bị thu hồi" : (content || "[Hình ảnh/Video]"),
-                            lastMessageType: type || 'TEXT',
-                            lastMessageTime: time,
-                            lastMessageSenderName: senderName || "",
-                            unreadCount: 1,
-                        };
+                const chatEntry = (item: any) => ({
+                    ...item,
+                    lastMessage: deleted ? "Tin nhắn đã bị thu hồi" : (content || "[Hình ảnh/Video]"),
+                    lastMessageType: type || 'TEXT',
+                    lastMessageTime: time,
+                    lastMessageSenderName: isMe ? "Bạn" : (senderName || ""),
+                    unreadCount: (item.unreadCount || 0) + (shouldIncrement ? 1 : 0),
+                    _sortOrder: nextSortOrder(),
+                });
 
-                        queryClient.setQueryData(['chats'], (oldList: any[] | undefined) => {
-                            const list = oldList || [];
-                            if (list.some(c => c.id === chatId)) return list;
-                            return [newChat, ...list];
-                        });
-
-                        // Subscribe ngay vào kênh chat mới
-                        if (clientRef.current?.connected) {
-                            clientRef.current.subscribe(`/topic/chat/${chatId}`, (msg) => {
-                                const data = JSON.parse(msg.body);
-                                if (data.newState && !data.id) {
-                                    const senderIdStr = data.messageSenderId
-                                        ? (typeof data.messageSenderId === 'string' ? data.messageSenderId : String(data.messageSenderId))
-                                        : undefined;
-                                    updateMessageStatusInCache(chatId, data.newState, false, senderIdStr);
-                                } else if (data.id) {
-                                    updateCache(chatId, data.id, data.content, data.createdAt, data.senderName, data.type, false, data.senderId, data.mediaUrl, data.deleted, data.fileName, data.replyTo);
-                                }
-                            });
-                        }
-                    }).catch(() => {
-                        // Fallback: invalidate nếu API lỗi
-                        queryClient.invalidateQueries({ queryKey: ['chats'] });
-                    });
-                    return oldList;
+                if (oldList) {
+                    const newList = [...oldList];
+                    const index = newList.findIndex((item: any) => item.id === chatId);
+                    if (index !== -1) {
+                        const updated = chatEntry(newList[index]);
+                        newList.splice(index, 1);
+                        newList.unshift(updated);
+                        return newList;
+                    }
                 }
+
+                // Chat mới chưa có trong list → gọi getChatById rồi chèn vào cache
+                console.log('[DEBUG] updateCache: chat mới, oldList:', oldList ? oldList.length : 'undefined', '| chatId:', chatId);
+                getChatById(chatId).then((chatDto) => {
+                    console.log('[DEBUG] getChatById success:', chatDto ? chatDto.id : 'null');
+                    const newChat = chatEntry({
+                        ...chatDto,
+                        unreadCount: 0,
+                    });
+
+                    queryClient.setQueryData(['chats'], (old: any[] | undefined) => {
+                        console.log('[DEBUG] setQueryData chats (new chat):', old ? old.length : 'undefined');
+                        const list = old ? [...old] : [];
+                        if (list.some(c => c.id === chatId)) return list;
+                        return [newChat, ...list];
+                    });
+
+                    // Subscribe topic của chat mới để nhận state changes (Delivered/Seen)
+                    if (clientRef.current?.connected) {
+                        clientRef.current.subscribe(`/topic/chat/${chatId}`, (msg) => {
+                            const data = JSON.parse(msg.body);
+                            if (data.newState && !data.id) {
+                                const senderIdStr = data.messageSenderId
+                                    ? (typeof data.messageSenderId === 'string' ? data.messageSenderId : String(data.messageSenderId))
+                                    : undefined;
+                                updateMessageStatusInCache(chatId, data.newState, false, senderIdStr);
+                            }
+                        });
+                    }
+                }).catch(() => {
+                    // Fallback: invalidate nếu API lỗi
+                    queryClient.invalidateQueries({ queryKey: ['chats'] });
+                });
+
+                // Trả về list hiện tại để React Query không revert cache
+                // (chat mới sẽ được thêm vào async qua then() bên trên)
+                return oldList ? [...oldList] : [];
             });
 
             // 2. Cập nhật CHI TIẾT
             queryClient.setQueryData(detailKey, (oldMessages: any[] | undefined) => {
-                if (!oldMessages) return oldMessages;
+                if (!oldMessages) return [];
 
                 // Nếu là tin nhắn thu hồi/xóa
                 if (deleted) {
@@ -281,6 +286,30 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
 
         client.onConnect = () => {
             setIsConnected(true);
+
+            // ─── LẮNG NGHE TIN NHẮN MỚI (Personal Queue) ─────────────────────
+            // Kênh này nhận mọi tin nhắn 1-1 mới, bao gồm cả cuộc trò chuyện CHƯA TỪNG CÓ
+            // BE gửi qua: /user/{email}/queue/messages → NotificationService.sendMessageNotification
+            client.subscribe('/user/queue/messages', (msg) => {
+                const data = JSON.parse(msg.body);
+                console.log('[DEBUG] /user/queue/messages received:', JSON.stringify(data));
+                if (data.id && data.chatId) {
+                    updateCache(
+                        data.chatId,
+                        data.id,
+                        data.content,
+                        data.createdAt,
+                        data.senderName,
+                        data.type,
+                        false, // isGroup
+                        data.senderId,
+                        data.mediaUrl,
+                        data.deleted,
+                        data.fileName,
+                        data.replyTo
+                    );
+                }
+            });
 
             // ─── LẮNG NGHE CÁC SỰ KIỆN HỆ THỐNG (Mức User) ───────────────────
 

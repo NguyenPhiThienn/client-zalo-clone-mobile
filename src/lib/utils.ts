@@ -20,11 +20,10 @@ export function parseBackendDate(raw: any): Date | null {
     return new Date(year, month - 1, day, hour, min, sec);
   }
 
-  // Format ISO string — thêm 'Z' nếu chưa có timezone suffix để đảm bảo parse đúng UTC
+  // Format ISO string — parse trực tiếp. Nếu không có timezone offset, JS sẽ parse dưới dạng local time.
+  // Điều này đảm bảo đồng bộ với cách parse Jackson array (dưới dạng local time).
   if (typeof raw === 'string') {
-    const hasTimezone = raw.endsWith('Z') || /[+-]\d{2}:\d{2}$/.test(raw);
-    const iso = hasTimezone ? raw : raw + 'Z';
-    const d = new Date(iso);
+    const d = new Date(raw);
     return isNaN(d.getTime()) ? null : d;
   }
 

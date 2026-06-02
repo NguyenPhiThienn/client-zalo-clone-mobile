@@ -37,7 +37,11 @@ export const useStartChat = () => {
       queryClient.setQueryData(["chats"], (old: any[] | undefined) => {
         const currentList = old ? [...old] : [];
         if (currentList.some(c => c.id === newChat.id)) return old;
-        return [newChat, ...currentList];
+        const initializedChat = {
+          ...newChat,
+          lastMessageTime: newChat.lastMessageTime || new Date().toISOString()
+        };
+        return [initializedChat, ...currentList];
       });
     },
   });

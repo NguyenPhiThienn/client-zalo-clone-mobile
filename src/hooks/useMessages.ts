@@ -11,6 +11,7 @@ import {
 } from "@/api/message";
 import { fetchAPI } from "@/lib/fetch";
 import { useAuthStore } from "@/store";
+import { nextSortOrder } from "@/lib/sortCounter";
 
 /** Lấy tin nhắn của 1 chat (phân trang) */
 export const useMessages = (chatId: string | null, page = 0, size = 30) => {
@@ -40,7 +41,9 @@ export const useSendMessage = () => {
           newList[index] = {
             ...newList[index],
             lastMessage: variables.content,
-            lastMessageTime: new Date().toISOString()
+            lastMessageTime: new Date().toISOString(),
+            lastMessageSenderName: "Bạn",
+            _sortOrder: nextSortOrder(),
           };
           newList.unshift(newList.splice(index, 1)[0]);
         }
@@ -97,7 +100,9 @@ export const useUploadMedia = (chatId: string) => {
           newList[index] = {
             ...newList[index],
             lastMessage: "[Hình ảnh/Tệp tin]",
-            lastMessageTime: new Date().toISOString()
+            lastMessageTime: new Date().toISOString(),
+            lastMessageSenderName: "Bạn",
+            _sortOrder: nextSortOrder(),
           };
           newList.unshift(newList.splice(index, 1)[0]);
         }

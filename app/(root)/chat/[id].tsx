@@ -239,7 +239,7 @@ const ChatScreen = () => {
                     content: content || "Tệp đính kèm",
                     senderName: msg.senderName,
                     mediaUrl: msg.image,
-                    type: msg.type
+                    type: msg.type as MessageType
                   });
                 }}
                 isHighlighted={item.id === highlightedMessageId}
