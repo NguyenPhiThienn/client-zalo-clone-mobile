@@ -104,8 +104,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
                     newList.unshift(updated);
                     return newList;
                 } else {
-                    // Nếu chưa có trong list (Chat/Nhóm mới), thì invalidate để load lại cả list có đầy đủ info
-                    queryClient.invalidateQueries({ queryKey: listKey });
+                    // Nếu chưa có trong list (Chat/Nhóm mới), trả về oldList mà không tự ý invalidate tránh xung đột race condition
                     return oldList;
                 }
             });
