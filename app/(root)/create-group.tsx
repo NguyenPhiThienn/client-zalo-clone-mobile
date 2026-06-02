@@ -6,10 +6,11 @@ import { router } from "expo-router";
 import { useContacts } from "@/hooks/useFriend";
 import { UserDto } from "@/api/user";
 import { createGroup } from "@/api/group";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { parseBackendDate, getAvatarUrl } from "@/lib/utils";
 
 const CreateGroupScreen = () => {
+    const queryClient = useQueryClient();
     const [groupName, setGroupName] = useState("");
     const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
     const [isCreating, setIsCreating] = useState(false);
@@ -41,6 +42,12 @@ const CreateGroupScreen = () => {
             const group = await createGroup({
                 name: groupName,
                 memberIds: selectedUsers,
+            });
+            // Cập nhật React Query cache trực tiếp tránh Redis cache cũ từ BE
+            queryClient.setQueryData(['groups'], (old: any[] | undefined) => {
+                const currentList = old ? [...old] : [];
+                if (currentList.some(g => g.id === group.id)) return old;
+                return [group, ...currentList];
             });
             Alert.alert("Thành công", "Đã tạo nhóm chat mới");
             router.replace({

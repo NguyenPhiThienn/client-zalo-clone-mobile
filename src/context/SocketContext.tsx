@@ -271,9 +271,8 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
                 const data = JSON.parse(msg.body);
                 const { groupId, groupName, senderName, text } = data;
 
-                // Invalidate để có chấm đỏ và tin nhắn mới ở home
-                queryClient.invalidateQueries({ queryKey: ["groups"] });
-                queryClient.invalidateQueries({ queryKey: ["chats"] });
+                // MENTION: Danh sách chats/groups tự động cập nhật bởi WebSocket tin nhắn.
+                // Chỉ cần invalidate group-messages để giao diện chat tải lại tin nhắn nếu đang mở.
                 if (groupId) queryClient.invalidateQueries({ queryKey: ["group-messages", groupId] });
 
                 showMessage({
@@ -444,7 +443,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
                             })
                             .catch(err => {
                                 console.error("[Socket] Error fetching new chat detail:", err);
-                                queryClient.invalidateQueries({ queryKey: ['chats'] });
+                                // Không invalidate 'chats' để tránh Redis cache cũ ghi đè
                             });
                     }
                 }
@@ -460,23 +459,41 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
 
                 if (type === 'MEMBER_ADDED') {
                     console.log(`[Socket] ✨ ADDING NEW GROUP STUB: ${groupName} (${groupId})`);
-                    queryClient.invalidateQueries({ queryKey: ['groups'] });
-
-                    queryClient.setQueryData(['groups'], (old: any[] | undefined) => {
-                        const newList = old ? [...old] : [];
-                        if (newList.some(g => String(g.id) === String(groupId))) return old;
-
-                        const stub = {
-                            id: groupId,
-                            name: groupName,
-                            avatarUrl: groupDto?.avatarUrl,
-                            lastMessage: "Bạn đã được thêm vào nhóm",
-                            lastMessageTime: new Date().toISOString(),
-                            unreadCount: 1,
-                            isGroup: true
-                        };
-                        return [stub, ...newList];
-                    });
+                    // Gọi API lấy thông tin chi tiết nhóm để cập nhật cache chính xác nhất, tránh invalidate list làm kích hoạt refetch data cũ từ Redis
+                    getGroupById(groupId)
+                        .then(newGroup => {
+                            queryClient.setQueryData(['groups'], (old: any[] | undefined) => {
+                                const newList = old ? [...old] : [];
+                                if (newList.some(g => String(g.id) === String(newGroup.id))) return old;
+                                const groupWithMsg = {
+                                    ...newGroup,
+                                    lastMessage: "Bạn đã được thêm vào nhóm",
+                                    lastMessageTime: new Date().toISOString(),
+                                    unreadCount: 1
+                                };
+                                return [groupWithMsg, ...newList];
+                            });
+                        })
+                        .catch(err => {
+                            console.error("[Socket] Error fetching group detail on MEMBER_ADDED:", err);
+                            queryClient.setQueryData(['groups'], (old: any[] | undefined) => {
+                                const newList = old ? [...old] : [];
+                                if (newList.some(g => String(g.id) === String(groupId))) return old;
+                                const stub = {
+                                    id: groupId,
+                                    name: groupName,
+                                    avatarUrl: groupDto?.avatarUrl || null,
+                                    createdById: groupDto?.createdById || "",
+                                    memberCount: groupDto?.memberCount || 1,
+                                    members: groupDto?.members || [],
+                                    isAdmin: groupDto?.createdById === useAuthStore.getState().user?.id,
+                                    lastMessage: "Bạn đã được thêm vào nhóm",
+                                    lastMessageTime: new Date().toISOString(),
+                                    unreadCount: 1
+                                };
+                                return [stub, ...newList];
+                            });
+                        });
 
                     // Subscribe tin nhắn mới cho nhóm này ngay lập tức
                     const topic = `/topic/group/${groupId}`;
@@ -510,7 +527,11 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
                     const currentUser = useAuthStore.getState().user;
                     if (currentUser && String(data.targetUserId) === String((currentUser as any).id)) {
                         console.log(`[Socket] ⚠️ YOU WERE REMOVED FROM GROUP: ${groupId}`);
-                        queryClient.invalidateQueries({ queryKey: ['groups'] });
+                        // Xóa trực tiếp khỏi cache thay vì invalidate làm refetch data cũ từ Redis
+                        queryClient.setQueryData(['groups'], (old: any[] | undefined) => {
+                            if (!old) return old;
+                            return old.filter(g => String(g.id) !== String(groupId));
+                        });
                         if (String(activeChatIdRef.current) === String(groupId)) {
                             require('react-native').Alert.alert("Thông báo", `Bạn đã bị xóa khỏi nhóm "${groupName}".`);
                             router.replace('/(root)/tabs/home');
@@ -529,7 +550,11 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
 
                 if (type === 'GROUP_DISSOLVED') {
                     console.log(`[Socket] ⚠️ GROUP DISSOLVED: ${groupId}`);
-                    queryClient.invalidateQueries({ queryKey: ['groups'] });
+                    // Xóa trực tiếp khỏi cache thay vì invalidate làm refetch data cũ từ Redis
+                    queryClient.setQueryData(['groups'], (old: any[] | undefined) => {
+                        if (!old) return old;
+                        return old.filter(g => String(g.id) !== String(groupId));
+                    });
                     if (String(activeChatIdRef.current) === String(groupId)) {
                         require('react-native').Alert.alert("Thông báo", `Nhóm "${groupName}" đã bị giải tán.`);
                         router.replace('/(root)/tabs/home');

@@ -14,7 +14,9 @@ export const useMyGroups = () => {
   return useQuery({
     queryKey: ["groups"],
     queryFn: getMyGroups,
-    staleTime: 60_000,
+    staleTime: Infinity,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
   });
 };
 
@@ -73,7 +75,7 @@ export const useSendGroupMessage = (groupId: string) => {
           deleted: false,
           pinned: false,
           reactions: [],
-          replyTo: (payload as any).replyTo,
+          // replyTo: (payload as any).replyTo,
         };
         return [newMessage, ...current];
       });
@@ -132,7 +134,7 @@ export const useUploadGroupMedia = (groupId: string) => {
           deleted: false,
           pinned: false,
           reactions: [],
-          replyTo: variables.replyTo,
+          // replyTo: variables.replyTo,
         };
         return [newMessage, ...current];
       });
@@ -191,9 +193,12 @@ export const useUpdateGroup = (groupId: string) => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (name: string) => updateGroup(groupId, { name }),
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["group", groupId] });
-      queryClient.invalidateQueries({ queryKey: ["groups"] });
+      queryClient.setQueryData(["groups"], (old: any[] | undefined) => {
+        if (!old) return old;
+        return old.map(g => String(g.id) === String(groupId) ? { ...g, name: data.name } : g);
+      });
     },
   });
 };
@@ -202,9 +207,12 @@ export const useUploadGroupAvatar = (groupId: string) => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (formData: FormData) => uploadGroupAvatar(groupId, formData),
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["group", groupId] });
-      queryClient.invalidateQueries({ queryKey: ["groups"] });
+      queryClient.setQueryData(["groups"], (old: any[] | undefined) => {
+        if (!old) return old;
+        return old.map(g => String(g.id) === String(groupId) ? { ...g, avatarUrl: data.avatarUrl } : g);
+      });
     },
   });
 };
@@ -243,8 +251,12 @@ export const useLeaveGroup = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ groupId, newAdminId }: { groupId: string; newAdminId?: string }) => leaveGroup(groupId, newAdminId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["groups"] });
+    onSuccess: (data, variables) => {
+      // Xóa trực tiếp khỏi cache tránh Redis cache cũ ghi đè
+      queryClient.setQueryData(["groups"], (old: any[] | undefined) => {
+        if (!old) return old;
+        return old.filter(g => String(g.id) !== String(variables.groupId));
+      });
     },
   });
 };
@@ -253,8 +265,12 @@ export const useDissolveGroup = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (groupId: string) => dissolveGroup(groupId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["groups"] });
+    onSuccess: (data, groupId) => {
+      // Xóa trực tiếp khỏi cache tránh Redis cache cũ ghi đè
+      queryClient.setQueryData(["groups"], (old: any[] | undefined) => {
+        if (!old) return old;
+        return old.filter(g => String(g.id) !== String(groupId));
+      });
     },
   });
 };

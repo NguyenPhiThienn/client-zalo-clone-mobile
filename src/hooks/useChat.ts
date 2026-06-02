@@ -10,7 +10,13 @@ export const useChats = () => {
   return useQuery<ChatDto[]>({
     queryKey: ["chats"],
     queryFn: getAllChats,
-    staleTime: 60_000, // Để 1 phút vì đã có Socket cập nhật ngầm cực chuẩn
+    // staleTime: Infinity — Socket cập nhật list real-time qua setQueryData.
+    // Không để React Query tự refetch nền vì BE Redis cache (TTL 30s) của người nhận
+    // chưa bị evict khi chat mới tạo → sẽ trả về data cũ và ghi đè lên cache!
+    // Chỉ refetch khi user kéo refresh thủ công (ConversationList.refetchChats()).
+    staleTime: Infinity,
+    refetchOnMount: false,
+    refetchOnWindowFocus: false,
   });
 };
 
@@ -23,13 +29,16 @@ export const useChatById = (chatId: string | null) => {
   });
 };
 
-/** Bắt đầu / lấy cuộc hội thoại với user khác */
 export const useStartChat = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (otherUserId: string) => startOrGetChat(otherUserId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["chats"] });
+    onSuccess: (newChat) => {
+      queryClient.setQueryData(["chats"], (old: any[] | undefined) => {
+        const currentList = old ? [...old] : [];
+        if (currentList.some(c => c.id === newChat.id)) return old;
+        return [newChat, ...currentList];
+      });
     },
   });
 };

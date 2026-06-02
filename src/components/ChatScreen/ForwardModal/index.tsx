@@ -52,7 +52,7 @@ const ForwardModal = ({ visible, onClose, messageContent, messageType, mediaUrl 
       if (target.isGroup) {
         // group forward via REST (hook inline)
         import('@/api/group').then(({ sendGroupMessage }) => {
-          sendGroupMessage(targetId, { content: messageContent, type: messageType as any, mediaUrl });
+          sendGroupMessage(targetId, { content: messageContent, type: messageType as any, mediaUrl } as any);
         });
       } else {
         sendPrivate({ chatId: targetId, content: messageContent, type: messageType as any, mediaUrl });

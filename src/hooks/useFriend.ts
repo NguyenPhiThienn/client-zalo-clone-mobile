@@ -91,7 +91,10 @@ export const useBlockUser = () => {
       queryClient.invalidateQueries({ queryKey: ["contacts"] });
       queryClient.invalidateQueries({ queryKey: ["user", userId] });
       queryClient.invalidateQueries({ queryKey: ["blocked-users"] });
-      queryClient.invalidateQueries({ queryKey: ["chats"] });
+      queryClient.setQueryData(["chats"], (old: any[] | undefined) => {
+        if (!old) return old;
+        return old.filter(c => c.recipientId !== userId);
+      });
     },
   });
 };
