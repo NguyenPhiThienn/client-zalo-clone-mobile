@@ -3,8 +3,8 @@ import React, { createContext, useContext, useEffect, useRef, useState } from 'r
 import { Client } from '@stomp/stompjs';
 import { useAuthStore } from '@/store';
 import { useQueryClient } from '@tanstack/react-query';
-import { getMyGroups } from '@/api/group';
-import { getAllChats } from '@/api/chat';
+import { getMyGroups, getGroupById } from '@/api/group';
+import { getAllChats, getChatById } from '@/api/chat';
 import { markMessagesAsSeen } from '@/api/message';
 import { setNotificationHandler, requestPermissionsAsync, scheduleNotificationAsync } from 'expo-notifications';
 import { showMessage } from 'react-native-flash-message';
@@ -424,10 +424,29 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
                         });
                     }
 
-                    // Nếu là chat mới (chưa có trong list 'chats'), thì invalidate để load lại list
+                    // Nếu là chat mới (chưa có trong list 'chats'), thì fetch chi tiết chat đó qua API và cập nhật cache ngay lập tức!
                     const chats = queryClient.getQueryData<any[]>(['chats']);
                     if (!chats || !chats.find(c => c.id === data.chatId)) {
-                        queryClient.invalidateQueries({ queryKey: ['chats'] });
+                        getChatById(data.chatId)
+                            .then(newChat => {
+                                queryClient.setQueryData(['chats'], (old: any[] | undefined) => {
+                                    const currentList = old ? [...old] : [];
+                                    if (currentList.some(c => c.id === newChat.id)) return old;
+                                    const chatWithMsg = {
+                                        ...newChat,
+                                        lastMessage: data.deleted ? "Tin nhắn đã bị thu hồi" : (data.content || "[Hình ảnh/Video]"),
+                                        lastMessageType: data.type || 'TEXT',
+                                        lastMessageTime: data.createdDate || data.createdAt || new Date().toISOString(),
+                                        lastMessageSenderName: data.senderId === useAuthStore.getState().user?.id ? "Bạn" : (data.senderName || ""),
+                                        unreadCount: activeChatIdRef.current === data.chatId ? 0 : 1
+                                    };
+                                    return [chatWithMsg, ...currentList];
+                                });
+                            })
+                            .catch(err => {
+                                console.error("[Socket] Error fetching new chat detail:", err);
+                                queryClient.invalidateQueries({ queryKey: ['chats'] });
+                            });
                     }
                 }
             });

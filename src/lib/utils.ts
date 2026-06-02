@@ -40,28 +40,31 @@ export function formatTime(minutes: number): string {
   return `${hours}h ${remainingMinutes}m`;
 }
 
-/** Format ISO date string to dd/MM/yyyy */
-export function formatDateVN(dateString: string): string {
+/** Format ISO date string or backend date to dd/MM/yyyy */
+export function formatDateVN(dateString: any): string {
   try {
-    return formatInTimeZone(new Date(dateString), VIETNAM_TIMEZONE, 'dd/MM/yyyy');
+    const d = parseBackendDate(dateString) || new Date(dateString);
+    return formatInTimeZone(d, VIETNAM_TIMEZONE, 'dd/MM/yyyy');
   } catch {
-    return dateString;
+    return String(dateString);
   }
 }
 
-/** Format ISO date string to dd/MM/yyyy HH:mm */
-export function formatDateTimeVN(dateString: string): string {
+/** Format ISO date string or backend date to dd/MM/yyyy HH:mm */
+export function formatDateTimeVN(dateString: any): string {
   try {
-    return formatInTimeZone(new Date(dateString), VIETNAM_TIMEZONE, 'dd/MM/yyyy HH:mm');
+    const d = parseBackendDate(dateString) || new Date(dateString);
+    return formatInTimeZone(d, VIETNAM_TIMEZONE, 'dd/MM/yyyy HH:mm');
   } catch {
-    return dateString;
+    return String(dateString);
   }
 }
 
-/** Format ISO date string to HH:mm */
-export function formatTimeVN(dateString: string): string {
+/** Format ISO date string or backend date to HH:mm */
+export function formatTimeVN(dateString: any): string {
   try {
-    return formatInTimeZone(new Date(dateString), VIETNAM_TIMEZONE, 'HH:mm');
+    const d = parseBackendDate(dateString) || new Date(dateString);
+    return formatInTimeZone(d, VIETNAM_TIMEZONE, 'HH:mm');
   } catch {
     return '';
   }
