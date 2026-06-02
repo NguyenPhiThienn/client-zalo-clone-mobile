@@ -144,69 +144,71 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
             fetchAndInsertChat(0);
         }
 
-        // 2. Cập nhật CHI TIẾT
-        queryClient.setQueryData(detailKey, (oldMessages: any[] | undefined) => {
-            if (!oldMessages) return [];
+        // 2. Cập nhật CHI TIẾT (Chỉ khi tin nhắn detail đã được fetch/load sẵn trong cache)
+        if (queryClient.getQueryData(detailKey) !== undefined) {
+            queryClient.setQueryData(detailKey, (oldMessages: any[] | undefined) => {
+                if (!oldMessages) return [];
 
-            // Nếu là tin nhắn thu hồi/xóa
-            if (deleted) {
-                const recallText = senderName ? `Tin nhắn đã được ${senderName} thu hồi` : "Tin nhắn đã được thu hồi";
-                return oldMessages.map((m: any) =>
-                    (m.id === messageId || m.content === content || m.id === content)
-                        ? { ...m, deleted: true, content: recallText, text: recallText }
-                        : m
+                // Nếu là tin nhắn thu hồi/xóa
+                if (deleted) {
+                    const recallText = senderName ? `Tin nhắn đã được ${senderName} thu hồi` : "Tin nhắn đã được thu hồi";
+                    return oldMessages.map((m: any) =>
+                        (m.id === messageId || m.content === content || m.id === content)
+                            ? { ...m, deleted: true, content: recallText, text: recallText }
+                            : m
+                    );
+                }
+
+                // Kiểm tra trùng lặp bằng ID chính xác từ server (Tránh trùng lặp do nhận Socket và REST cùng lúc)
+                const isDup = oldMessages.some((m: any) => m.id === messageId);
+                // Tìm tin nhắn lạc quan (optimistic) có cùng nội dung + sender để thay thế
+                const optimisticMsgIndex = oldMessages.findIndex(m =>
+                    (m.id?.startsWith('temp-') || m.state === 'SENDING') &&
+                    m.senderId === senderId &&
+                    m.content === content
                 );
-            }
 
-            // Kiểm tra trùng lặp bằng ID chính xác từ server (Tránh trùng lặp do nhận Socket và REST cùng lúc)
-            const isDup = oldMessages.some((m: any) => m.id === messageId);
-            // Tìm tin nhắn lạc quan (optimistic) có cùng nội dung + sender để thay thế
-            const optimisticMsgIndex = oldMessages.findIndex(m =>
-                (m.id?.startsWith('temp-') || m.state === 'SENDING') &&
-                m.senderId === senderId &&
-                m.content === content
-            );
+                if (isDup) {
+                    // Nếu đã có, cập nhật lại với data chuẩn từ Socket
+                    return oldMessages.map(m => m.id === messageId ? { ...m, mediaUrl, fileName, replyTo } : m);
+                }
 
-            if (isDup) {
-                // Nếu đã có, cập nhật lại với data chuẩn từ Socket
-                return oldMessages.map(m => m.id === messageId ? { ...m, mediaUrl, fileName, replyTo } : m);
-            }
+                if (optimisticMsgIndex !== -1) {
+                    // Thay thế tin nhắn lạc quan bằng tin nhắn thật từ Socket
+                    const newList = [...oldMessages];
+                    newList[optimisticMsgIndex] = {
+                        ...newList[optimisticMsgIndex],
+                        id: messageId,
+                        state: 'SENT',
+                        createdAt: time,
+                        createdDate: time,
+                        mediaUrl: mediaUrl,
+                        fileName: fileName,
+                        replyTo: replyTo
+                    };
+                    return newList;
+                }
 
-            if (optimisticMsgIndex !== -1) {
-                // Thay thế tin nhắn lạc quan bằng tin nhắn thật từ Socket
-                const newList = [...oldMessages];
-                newList[optimisticMsgIndex] = {
-                    ...newList[optimisticMsgIndex],
+                const newMessage = {
                     id: messageId,
-                    state: 'SENT',
+                    chatId: chatId,
+                    content: content,
+                    text: content,
+                    type: type || 'TEXT',
                     createdAt: time,
                     createdDate: time,
+                    senderId: senderId,
+                    senderName: senderName,
+                    state: 'SENT',
+                    deleted: deleted,
                     mediaUrl: mediaUrl,
                     fileName: fileName,
-                    replyTo: replyTo
+                    replyTo: replyTo,
+                    reactions: []
                 };
-                return newList;
-            }
-
-            const newMessage = {
-                id: messageId,
-                chatId: chatId,
-                content: content,
-                text: content,
-                type: type || 'TEXT',
-                createdAt: time,
-                createdDate: time,
-                senderId: senderId,
-                senderName: senderName,
-                state: 'SENT',
-                deleted: deleted,
-                mediaUrl: mediaUrl,
-                fileName: fileName,
-                replyTo: replyTo,
-                reactions: []
-            };
-            return [newMessage, ...oldMessages];
-        });
+                return [newMessage, ...oldMessages];
+            });
+        }
 
         if (chatListeners.current[chatId]) {
             chatListeners.current[chatId].forEach(cb => cb({ chatId, messageId, content, createdAt: time, senderId, senderName, type, mediaUrl, deleted, fileName, replyTo }));
@@ -251,11 +253,18 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
 
     const updateReactionsInCache = (chatId: string, messageId: string, reactions: any[], isGroup: boolean) => {
         const detailKey = isGroup ? ['group-messages', chatId, 0] : ['messages', chatId, 0];
+        console.log(`[Socket-Reactions] updateReactionsInCache called for chatId: ${chatId}, messageId: ${messageId}, reactions:`, JSON.stringify(reactions));
         queryClient.setQueryData(detailKey, (oldMessages: any[] | undefined) => {
-            if (!oldMessages) return oldMessages;
-            return oldMessages.map((m: any) =>
+            if (!oldMessages) {
+                console.log(`[Socket-Reactions] Cache detailKey not found:`, detailKey);
+                return oldMessages;
+            }
+            const updatedList = oldMessages.map((m: any) =>
                 m.id === messageId ? { ...m, reactions } : m
             );
+            const found = oldMessages.some((m: any) => m.id === messageId);
+            console.log(`[Socket-Reactions] Message matched in cache: ${found}`);
+            return updatedList;
         });
     };
 
@@ -471,9 +480,16 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
 
             // 3. Lắng nghe REACTION tin nhắn 1-1
             client.subscribe('/user/queue/reactions', (msg) => {
-                const data = JSON.parse(msg.body);
-                if (data.messageId && data.chatId) {
-                    updateReactionsInCache(data.chatId, data.messageId, data.reactions, false);
+                try {
+                    const data = JSON.parse(msg.body);
+                    console.log('[Socket] Received 1-1 reaction event:', JSON.stringify(data));
+                    if (data.messageId && data.chatId) {
+                        updateReactionsInCache(data.chatId, data.messageId, data.reactions, false);
+                    } else {
+                        console.warn('[Socket] Reaction event payload missing messageId or chatId:', data);
+                    }
+                } catch (e) {
+                    console.error('[Socket] Failed to parse reaction event body:', e);
                 }
             });
 
