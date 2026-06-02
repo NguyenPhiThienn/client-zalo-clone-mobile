@@ -19,6 +19,7 @@ import { useSendMessage, useUploadMedia } from '@/hooks/useMessages';
 import { useSendGroupMessage, useUploadGroupMedia, useGroupById } from '@/hooks/useGroup';
 import { getMemberName } from '@/api/group';
 import { getMediaUrl, MessageType } from '@/api/message';
+import { getAvatarUrl } from '@/lib/utils';
 import SmartReply from '../SmartReply';
 import { Image } from 'react-native';
 
@@ -304,7 +305,7 @@ const ChatInput = ({ chatId, isGroup = false, replyTo = null, onCancelReply }: C
                       </View>
                     ) : (
                       <Image
-                        source={{ uri: (item as any).avatarUrl ? getMediaUrl((item as any).avatarUrl) : `https://ui-avatars.com/api/?name=${item.name}` }}
+                        source={{ uri: getAvatarUrl(item.name, (item as any).avatarUrl) }}
                         className="w-8 h-8 rounded-full"
                       />
                     )}

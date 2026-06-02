@@ -1,0 +1,13 @@
+fix: unify avatar rendering across mobile app
+
+- getAvatarUrl: use getImageUrl to resolve BE avatar URLs first,
+  fallback to UI-Avatars initials if no avatar set
+- getImageUrl: fix bug returning undefined for relative paths, always
+  point to S3 bucket for avatar images (public-read R2 bucket)
+- ChatHeader: remove dicebear fallback, use getAvatarUrl properly
+- ChatInput (mention list): use getAvatarUrl for member avatars
+- MessageItem: use getAvatarUrl for sender avatars
+- create-group: use getAvatarUrl for friend avatars
+- tabs/profile: remove dicebear fallback
+- personal-wall: remove dicebear fallback
+- SearchBar: use getAvatarUrl for current user avatar

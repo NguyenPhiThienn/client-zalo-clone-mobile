@@ -127,7 +127,7 @@ const PersonalWallScreen = () => {
             <TouchableOpacity onPress={handlePickImage} activeOpacity={0.8}>
               <Image
                 source={{
-                  uri: getAvatarUrl(name, profile?.avatarUrl) || `https://api.dicebear.com/9.x/avataaars/png?seed=${encodeURIComponent(name)}`
+                  uri: getAvatarUrl(name, profile?.avatarUrl)
                 }}
                 style={styles.avatar}
               />

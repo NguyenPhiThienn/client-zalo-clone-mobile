@@ -89,8 +89,12 @@ export function formatFullName(firstName?: string, lastName?: string): string {
 
 /** Generate Initials avatar URL from a seed string (handles numbers & text better) */
 export function getAvatarUrl(seed: string, fallback?: string | null): string {
-  if (fallback) return getImageUrl(fallback) || fallback;
-  // Sử dụng UI-Avatars để hỗ trợ tốt nhất cho cả tên bằng số và chữ, đồng bộ màu xanh Zalo
+  // 1. Ưu tiên avatar thật từ BE
+  if (fallback) {
+    const resolved = getImageUrl(fallback);
+    if (resolved) return resolved;
+  }
+  // 2. Fallback: UI-Avatars với màu xanh Zalo
   return `https://ui-avatars.com/api/?name=${encodeURIComponent(seed)}&background=0068ff&color=fff&size=128&bold=true`;
 }
 
@@ -100,22 +104,14 @@ const S3_BASE_URL = "https://zaloclone-storage.s3.ap-southeast-1.amazonaws.com";
 export function getImageUrl(path?: string): string | undefined {
   if (!path) return undefined;
 
-  // 1. Nếu đã là URL hoàn chỉnh (Bao gồm Presigned S3, HTTP, hoặc Local Device File URI) thì lấy nguyên bản
+  // 1. Nếu đã là URL hoàn chỉnh (Presigned S3, HTTP, hoặc Local Device File URI) thì lấy nguyên bản
   if (path.startsWith('http') || path.startsWith('file://')) return path;
 
-  // 2. Nếu là raw S3 Key (không có dấu /), chúng ta trỏ thẳng về bucket S3 của bạn
+  // 2. Nếu là raw S3 Key (không có dấu /), chỉ có extension → trỏ thẳng về bucket S3 (public-read)
   if (!path.includes('/')) {
     return `${S3_BASE_URL}/${path}`;
   }
 
-  // 3. Fallback cho các trường hợp lấy file từ Local API (nếu có)
-  const baseUrl = process.env.EXPO_PUBLIC_SERVER_URL || "";
-  const host = baseUrl.split('/api/v1')[0];
-
-  if (!host) return undefined;
-
-  const cleanHost = host.endsWith('/') ? host.slice(0, -1) : host;
-  const cleanPath = path.startsWith('/') ? path : `/${path}`;
-
-  return `${cleanHost}${cleanPath}`;
+  // 3. Relative path có chứa / → trỏ thẳng về bucket S3
+  return `${S3_BASE_URL}/${path}`;
 }

@@ -3,7 +3,7 @@ import { View, Text, TouchableOpacity, Image, StyleSheet, ActivityIndicator } fr
 import { Ionicons } from '@expo/vector-icons';
 import { useRouter } from 'expo-router';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { getAvatarUrl } from '@/lib/utils';
+import { getImageUrl, getAvatarUrl } from '@/lib/utils';
 import { StatusBar } from 'expo-status-bar';
 
 interface ChatHeaderProps {
@@ -44,7 +44,7 @@ const ChatHeader = ({ name, avatarUrl, online, lastSeenText, isGroup, groupId, o
         {/* Ảnh đại diện */}
         <TouchableOpacity style={styles.avatarWrapper} onPress={handlePressInfo}>
           <Image
-            source={{ uri: avatar || `https://api.dicebear.com/9.x/avataaars/png?seed=${encodeURIComponent(name)}` }}
+            source={{ uri: avatar }}
             style={styles.avatar}
           />
           {online && <View style={styles.onlineDot} />}

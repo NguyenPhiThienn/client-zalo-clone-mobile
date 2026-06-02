@@ -149,7 +149,7 @@ const ProfileScreen = () => {
                   uri: getAvatarUrl(
                     formatFullName(profile?.firstName, profile?.lastName || ""), 
                     profile?.avatarUrl
-                  ) || `https://api.dicebear.com/9.x/avataaars/png?seed=User` 
+                  )
                 }}
                 className="w-24 h-24 rounded-full bg-gray-100 border-4 border-white shadow-sm"
               />

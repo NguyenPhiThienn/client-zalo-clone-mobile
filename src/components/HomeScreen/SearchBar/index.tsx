@@ -11,14 +11,14 @@ import {
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useAuth } from "@/context/AuthContext";
+import { getAvatarUrl } from "@/lib/utils";
 import { Image } from "react-native";
 
 const ZaloSearchBar = () => {
   const { user } = useAuth();
   const [focused, setFocused] = useState(false);
 
-  const avatarUrl =
-    `https://api.dicebear.com/9.x/avataaars/png?seed=${user?.name || "user"}`;
+  const avatarUrl = getAvatarUrl(user?.name || "User", user?.avatar);
 
   return (
     <View style={styles.container}>

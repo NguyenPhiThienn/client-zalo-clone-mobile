@@ -7,7 +7,7 @@ import { useContacts } from "@/hooks/useFriend";
 import { UserDto } from "@/api/user";
 import { createGroup } from "@/api/group";
 import { useQuery } from "@tanstack/react-query";
-import { parseBackendDate } from "@/lib/utils";
+import { parseBackendDate, getAvatarUrl } from "@/lib/utils";
 
 const CreateGroupScreen = () => {
     const [groupName, setGroupName] = useState("");
@@ -127,7 +127,7 @@ const CreateGroupScreen = () => {
                             activeOpacity={0.7}
                         >
                             <Image
-                                source={{ uri: item.avatarUrl || `https://api.dicebear.com/9.x/avataaars/png?seed=${item.email}` }}
+                                source={{ uri: getAvatarUrl(`${item.firstName || ""} ${item.lastName || ""}`.trim(), item.avatarUrl) }}
                                 className="w-[50px] h-[50px] rounded-full"
                             />
                             <View className="ml-4 flex-1">

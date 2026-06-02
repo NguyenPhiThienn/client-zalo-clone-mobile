@@ -23,7 +23,7 @@ import { Audio, Video, ResizeMode } from 'expo-av';
 import ForwardModal from '../ForwardModal';
 import ReportModal from '@/components/ReportModal';
 import { ChatMessage } from '@/types/type';
-import { getImageUrl } from '@/lib/utils';
+import { getImageUrl, getAvatarUrl } from '@/lib/utils';
 import ImageViewing from "react-native-image-viewing";
 import { useRecallMessage, useDeleteMessage } from '@/hooks/useMessages';
 import { useReactToMessage, useReactToGroupMessage } from '@/hooks/useReaction';
@@ -341,7 +341,7 @@ const MessageItem = ({ item, isMe, isGroup, onReply, onScrollToMessage, isHighli
     <View style={[styles.container, isMe ? styles.myContainer : styles.otherContainer]}>
       {!isMe && (
         <View style={styles.avatarSpace}>
-          <Image source={{ uri: item.avatar || `https://api.dicebear.com/9.x/avataaars/png?seed=${encodeURIComponent(item.senderName || "User")}` }} style={styles.avatar} />
+          <Image source={{ uri: item.avatar || getAvatarUrl(item.senderName || "User", undefined) }} style={styles.avatar} />
         </View>
       )}
 
