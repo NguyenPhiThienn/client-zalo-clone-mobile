@@ -2,9 +2,9 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { Client } from '@stomp/stompjs';
 import { useAuthStore } from '@/store';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { getMyGroups } from '@/api/group';
-import { getAllChats, getChatById } from '@/api/chat';
+import { getAllChats, getChatById, startOrGetChat } from '@/api/chat';
 import { markMessagesAsSeen } from '@/api/message';
 import { setNotificationHandler, requestPermissionsAsync, scheduleNotificationAsync } from 'expo-notifications';
 import { showMessage } from 'react-native-flash-message';
@@ -44,7 +44,318 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     const queryClient = useQueryClient();
     const chatListeners = useRef<Record<string, ((data: any) => void)[]>>({});
     const activeChatIdRef = useRef<string | null>(null);
-    // NOTE: nextSortOrder() từ sortCounter.ts là source of truth, dùng chung với mutation hooks
+
+    // Helpers definition
+    const updateCache = (chatId: string, messageId: string, content: string, createdAt: any, senderName: string, type: string, isGroup: boolean, senderId: string, mediaUrl: string | null = null, deleted: boolean = false, fileName: string | null = null, replyTo: any = null) => {
+        if (!content && !mediaUrl && !deleted) return;
+
+        const listKey = isGroup ? ['groups'] : ['chats'];
+        const detailKey = isGroup ? ['group-messages', chatId, 0] : ['messages', chatId, 0];
+
+        let time = createdAt;
+        if (Array.isArray(createdAt)) {
+            time = new Date(createdAt[0], createdAt[1] - 1, createdAt[2], createdAt[3], createdAt[4], createdAt[5]).toISOString();
+        } else if (!createdAt) {
+            time = new Date().toISOString();
+        }
+
+        // 1. Cập nhật HOME LIST
+        queryClient.setQueryData(listKey, (oldList: any[] | undefined) => {
+            const currentUser = useAuthStore.getState().user;
+            const isMe = senderId && currentUser && senderId === (currentUser as any).id;
+            const isNotMe = !isMe;
+            const shouldIncrement = isNotMe && (activeChatIdRef.current !== chatId);
+
+            const chatEntry = (item: any) => ({
+                ...item,
+                lastMessage: deleted ? "Tin nhắn đã bị thu hồi" : (content || "[Hình ảnh/Video]"),
+                lastMessageType: type || 'TEXT',
+                lastMessageTime: time,
+                lastMessageSenderName: isMe ? "Bạn" : (senderName || ""),
+                unreadCount: (item.unreadCount || 0) + (shouldIncrement ? 1 : 0),
+                _sortOrder: nextSortOrder(),
+            });
+
+            if (oldList) {
+                const newList = [...oldList];
+                const index = newList.findIndex((item: any) => item.id === chatId);
+                if (index !== -1) {
+                    const updated = chatEntry(newList[index]);
+                    newList.splice(index, 1);
+                    newList.unshift(updated);
+                    return newList;
+                }
+            }
+
+            // Chat mới chưa có trong list → gọi getChatById rồi chèn vào cache
+            console.log('[DEBUG] updateCache: chat mới, oldList:', oldList ? oldList.length : 'undefined', '| chatId:', chatId);
+            getChatById(chatId).then((chatDto) => {
+                console.log('[DEBUG] getChatById success:', chatDto ? chatDto.id : 'null');
+                const newChat = chatEntry({
+                    ...chatDto,
+                    unreadCount: 0,
+                });
+
+                queryClient.setQueryData(['chats'], (old: any[] | undefined) => {
+                    console.log('[DEBUG] setQueryData chats (new chat):', old ? old.length : 'undefined');
+                    const list = old ? [...old] : [];
+                    if (list.some(c => c.id === chatId)) return list;
+                    return [newChat, ...list];
+                });
+
+                // Subscribe topic của chat mới để nhận state changes (Delivered/Seen)
+                if (clientRef.current?.connected) {
+                    clientRef.current.subscribe(`/topic/chat/${chatId}`, (msg) => {
+                        const data = JSON.parse(msg.body);
+                        if (data.newState && !data.id) {
+                            const senderIdStr = data.messageSenderId
+                                ? (typeof data.messageSenderId === 'string' ? data.messageSenderId : String(data.messageSenderId))
+                                : undefined;
+                            updateMessageStatusInCache(chatId, data.newState, false, senderIdStr);
+                        }
+                    });
+                }
+            }).catch(() => {
+                // Fallback: invalidate nếu API lỗi
+                queryClient.invalidateQueries({ queryKey: ['chats'] });
+            });
+
+            // Trả về list hiện tại để React Query không revert cache
+            // (chat mới sẽ được thêm vào async qua then() bên trên)
+            return oldList ? [...oldList] : [];
+        });
+
+        // 2. Cập nhật CHI TIẾT
+        queryClient.setQueryData(detailKey, (oldMessages: any[] | undefined) => {
+            if (!oldMessages) return [];
+
+            // Nếu là tin nhắn thu hồi/xóa
+            if (deleted) {
+                const recallText = senderName ? `Tin nhắn đã được ${senderName} thu hồi` : "Tin nhắn đã được thu hồi";
+                return oldMessages.map((m: any) =>
+                    (m.id === messageId || m.content === content || m.id === content)
+                        ? { ...m, deleted: true, content: recallText, text: recallText }
+                        : m
+                );
+            }
+
+            // Kiểm tra trùng lặp bằng ID chính xác từ server (Tránh trùng lặp do nhận Socket và REST cùng lúc)
+            const isDup = oldMessages.some((m: any) => m.id === messageId);
+            // Tìm tin nhắn lạc quan (optimistic) có cùng nội dung + sender để thay thế
+            const optimisticMsgIndex = oldMessages.findIndex(m =>
+                (m.id?.startsWith('temp-') || m.state === 'SENDING') &&
+                m.senderId === senderId &&
+                m.content === content
+            );
+
+            if (isDup) {
+                // Nếu đã có, cập nhật lại với data chuẩn từ Socket
+                return oldMessages.map(m => m.id === messageId ? { ...m, mediaUrl, fileName, replyTo } : m);
+            }
+
+            if (optimisticMsgIndex !== -1) {
+                // Thay thế tin nhắn lạc quan bằng tin nhắn thật từ Socket
+                const newList = [...oldMessages];
+                newList[optimisticMsgIndex] = {
+                    ...newList[optimisticMsgIndex],
+                    id: messageId,
+                    state: 'SENT',
+                    createdAt: time,
+                    createdDate: time,
+                    mediaUrl: mediaUrl,
+                    fileName: fileName,
+                    replyTo: replyTo
+                };
+                return newList;
+            }
+
+            const newMessage = {
+                id: messageId,
+                chatId: chatId,
+                content: content,
+                text: content,
+                type: type || 'TEXT',
+                createdAt: time,
+                createdDate: time,
+                senderId: senderId,
+                senderName: senderName,
+                state: 'SENT',
+                deleted: deleted,
+                mediaUrl: mediaUrl,
+                fileName: fileName,
+                replyTo: replyTo,
+                reactions: []
+            };
+            return [newMessage, ...oldMessages];
+        });
+
+        if (chatListeners.current[chatId]) {
+            chatListeners.current[chatId].forEach(cb => cb({ chatId, messageId, content, createdAt: time, senderId, senderName, type, mediaUrl, deleted, fileName, replyTo }));
+        }
+
+        // 3. THÔNG BÁO (Nếu không phải chat đang mở)
+        if (activeChatIdRef.current !== chatId && !deleted) {
+            const currentUser = useAuthStore.getState().user;
+            if (senderId !== (currentUser as any)?.id) {
+                // Hiển thị Toast trong app
+                showMessage({
+                    message: senderName || "Tin nhắn mới",
+                    description: content || "[Hình ảnh/Video]",
+                    type: "info",
+                    backgroundColor: "#0068FF",
+                    onPress: () => {
+                        router.push({
+                            pathname: "/(root)/chat/[id]",
+                            params: { id: chatId, name: senderName || "Chat", isGroup: String(isGroup) }
+                        });
+                    }
+                });
+
+                // Hiển thị Notification hệ thống
+                scheduleNotificationAsync({
+                    content: {
+                        title: senderName || "Tin nhắn mới",
+                        body: content || "[Hình ảnh/Video]",
+                        data: { chatId, isGroup },
+                    },
+                    trigger: null,
+                });
+            }
+        }
+
+        // 4. ĐÁNH DẤU ĐÃ XEM NGAY LẬP TỨC (Nếu đang mở chat) — chỉ cho 1-1
+        // Nhóm: BE tự clear unread trong getMessages(), không cần gọi API
+        const currentUser = useAuthStore.getState().user;
+        const myId = (currentUser as any)?.id;
+        if (activeChatIdRef.current === chatId && senderId !== myId && !isGroup) {
+          markMessagesAsSeen(chatId).catch(() => { });
+        }
+    };
+
+    const updateReactionsInCache = (chatId: string, messageId: string, reactions: any[], isGroup: boolean) => {
+        const detailKey = isGroup ? ['group-messages', chatId, 0] : ['messages', chatId, 0];
+        queryClient.setQueryData(detailKey, (oldMessages: any[] | undefined) => {
+            if (!oldMessages) return oldMessages;
+            return oldMessages.map((m: any) =>
+                m.id === messageId ? { ...m, reactions } : m
+            );
+        });
+    };
+
+    const STATE_ORDER: Record<string, number> = { SENDING: 0, SENT: 1, DELIVERED: 2, SEEN: 3 };
+
+    const updateMessageStatusInCache = (chatId: string, status: string, isGroup: boolean, messageSenderId?: string) => {
+        const detailKey = isGroup ? ['group-messages', chatId, 0] : ['messages', chatId, 0];
+        queryClient.setQueryData(detailKey, (oldMessages: any[] | undefined) => {
+            if (!oldMessages) return oldMessages;
+            return oldMessages.map((m: any) => {
+                // Chỉ cập nhật tin nhắn của người gửi được chỉ định (nếu có)
+                if (messageSenderId && m.senderId !== messageSenderId) return m;
+                // Chỉ nâng cấp trạng thái, không hạ xuống (SEEN > DELIVERED > SENT)
+                const currentOrder = STATE_ORDER[m.state] ?? 0;
+                const newOrder = STATE_ORDER[status] ?? 0;
+                if (newOrder <= currentOrder) return m;
+                return { ...m, state: status };
+            });
+        });
+    };
+
+    // Queries to keep chats and groups lists alive and synced dynamically
+    const { data: chats } = useQuery<any[]>({
+        queryKey: ["chats"],
+        queryFn: getAllChats,
+        enabled: isConnected && !!token,
+        staleTime: Infinity,
+    });
+
+    const { data: groups } = useQuery<any[]>({
+        queryKey: ["groups"],
+        queryFn: getMyGroups,
+        enabled: isConnected && !!token,
+        staleTime: Infinity,
+    });
+
+    // Refs and effect for managing dynamic subscriptions to all chats & groups
+    const subscribedChatsRef = useRef<Set<string>>(new Set());
+    const subscribedGroupsRef = useRef<Set<string>>(new Set());
+    const subscriptionsRef = useRef<Record<string, any>>({});
+
+    useEffect(() => {
+        if (!isConnected || !clientRef.current?.connected) {
+            // Clear subscriptions on disconnect
+            Object.values(subscriptionsRef.current).forEach((sub: any) => {
+                try { sub.unsubscribe(); } catch (e) {}
+            });
+            subscribedChatsRef.current.clear();
+            subscribedGroupsRef.current.clear();
+            subscriptionsRef.current = {};
+            return;
+        }
+
+        // 1. Subscribe to any new/existing chats in background
+        chats?.forEach((chat) => {
+            if (subscribedChatsRef.current.has(chat.id)) return;
+            
+            console.log(`[Socket] 📡 Background subscribing to chat topic: ${chat.id}`);
+            const sub = clientRef.current!.subscribe(`/topic/chat/${chat.id}`, (msg) => {
+                const data = JSON.parse(msg.body);
+                // If it is a message state change update (Seen/Delivered)
+                if (data.newState && !data.id) {
+                    const senderIdStr = data.messageSenderId
+                        ? (typeof data.messageSenderId === 'string' ? data.messageSenderId : String(data.messageSenderId))
+                        : undefined;
+                    updateMessageStatusInCache(chat.id, data.newState, false, senderIdStr);
+                } 
+                // If it is a new message
+                else if (data.id) {
+                    updateCache(chat.id, data.id, data.content, data.createdAt, data.senderName, data.type, false, data.senderId, data.mediaUrl, data.deleted, data.fileName, data.replyTo);
+                }
+            });
+            subscribedChatsRef.current.add(chat.id);
+            subscriptionsRef.current[`chat-${chat.id}`] = sub;
+        });
+
+        // 2. Subscribe to any new/existing groups in background
+        groups?.forEach((group) => {
+            if (subscribedGroupsRef.current.has(group.id)) return;
+
+            console.log(`[Socket] 👥 Background subscribing to group topic: ${group.id}`);
+            const sub = clientRef.current!.subscribe(`/topic/group/${group.id}`, (msg) => {
+                const data = JSON.parse(msg.body);
+                if (data.newState && !data.id) {
+                    updateMessageStatusInCache(group.id, data.newState, true);
+                } else if (data.id) {
+                    updateCache(group.id, data.id, data.content, data.createdDate || data.createdAt, data.senderName, data.type, true, data.senderId, data.mediaUrl, data.deleted, data.fileName, data.replyTo);
+                } else if (data.messageId && data.reactions) {
+                    updateReactionsInCache(group.id, data.messageId, data.reactions, true);
+                }
+            });
+            subscribedGroupsRef.current.add(group.id);
+            subscriptionsRef.current[`group-${group.id}`] = sub;
+        });
+
+        // Cleanup unsubscribed items if they were removed from list
+        const activeChatIds = new Set((chats || []).map((c: any) => c.id));
+        subscribedChatsRef.current.forEach((id) => {
+            if (!activeChatIds.has(id)) {
+                console.log(`[Socket] 🗑 Unsubscribing from chat topic: ${id}`);
+                try { subscriptionsRef.current[`chat-${id}`]?.unsubscribe(); } catch (e) {}
+                subscribedChatsRef.current.delete(id);
+                delete subscriptionsRef.current[`chat-${id}`];
+            }
+        });
+
+        const activeGroupIds = new Set((groups || []).map((g: any) => g.id));
+        subscribedGroupsRef.current.forEach((id) => {
+            if (!activeGroupIds.has(id)) {
+                console.log(`[Socket] 🗑 Unsubscribing from group topic: ${id}`);
+                try { subscriptionsRef.current[`group-${id}`]?.unsubscribe(); } catch (e) {}
+                subscribedGroupsRef.current.delete(id);
+                delete subscriptionsRef.current[`group-${id}`];
+            }
+        });
+
+    }, [chats, groups, isConnected]);
 
     useEffect(() => {
         const requestPermissions = async () => {
@@ -68,221 +379,6 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
             heartbeatIncoming: 0,
             heartbeatOutgoing: 0,
         });
-
-        const updateCache = (chatId: string, messageId: string, content: string, createdAt: any, senderName: string, type: string, isGroup: boolean, senderId: string, mediaUrl: string | null = null, deleted: boolean = false, fileName: string | null = null, replyTo: any = null) => {
-            if (!content && !mediaUrl && !deleted) return;
-
-            const listKey = isGroup ? ['groups'] : ['chats'];
-            const detailKey = isGroup ? ['group-messages', chatId, 0] : ['messages', chatId, 0];
-
-            let time = createdAt;
-            if (Array.isArray(createdAt)) {
-                time = new Date(createdAt[0], createdAt[1] - 1, createdAt[2], createdAt[3], createdAt[4], createdAt[5]).toISOString();
-            } else if (!createdAt) {
-                time = new Date().toISOString();
-            }
-
-            // 1. Cập nhật HOME LIST
-            queryClient.setQueryData(listKey, (oldList: any[] | undefined) => {
-                const currentUser = useAuthStore.getState().user;
-                const isMe = senderId && currentUser && senderId === (currentUser as any).id;
-                const isNotMe = !isMe;
-                const shouldIncrement = isNotMe && (activeChatIdRef.current !== chatId);
-
-                const chatEntry = (item: any) => ({
-                    ...item,
-                    lastMessage: deleted ? "Tin nhắn đã bị thu hồi" : (content || "[Hình ảnh/Video]"),
-                    lastMessageType: type || 'TEXT',
-                    lastMessageTime: time,
-                    lastMessageSenderName: isMe ? "Bạn" : (senderName || ""),
-                    unreadCount: (item.unreadCount || 0) + (shouldIncrement ? 1 : 0),
-                    _sortOrder: nextSortOrder(),
-                });
-
-                if (oldList) {
-                    const newList = [...oldList];
-                    const index = newList.findIndex((item: any) => item.id === chatId);
-                    if (index !== -1) {
-                        const updated = chatEntry(newList[index]);
-                        newList.splice(index, 1);
-                        newList.unshift(updated);
-                        return newList;
-                    }
-                }
-
-                // Chat mới chưa có trong list → gọi getChatById rồi chèn vào cache
-                console.log('[DEBUG] updateCache: chat mới, oldList:', oldList ? oldList.length : 'undefined', '| chatId:', chatId);
-                getChatById(chatId).then((chatDto) => {
-                    console.log('[DEBUG] getChatById success:', chatDto ? chatDto.id : 'null');
-                    const newChat = chatEntry({
-                        ...chatDto,
-                        unreadCount: 0,
-                    });
-
-                    queryClient.setQueryData(['chats'], (old: any[] | undefined) => {
-                        console.log('[DEBUG] setQueryData chats (new chat):', old ? old.length : 'undefined');
-                        const list = old ? [...old] : [];
-                        if (list.some(c => c.id === chatId)) return list;
-                        return [newChat, ...list];
-                    });
-
-                    // Subscribe topic của chat mới để nhận state changes (Delivered/Seen)
-                    if (clientRef.current?.connected) {
-                        clientRef.current.subscribe(`/topic/chat/${chatId}`, (msg) => {
-                            const data = JSON.parse(msg.body);
-                            if (data.newState && !data.id) {
-                                const senderIdStr = data.messageSenderId
-                                    ? (typeof data.messageSenderId === 'string' ? data.messageSenderId : String(data.messageSenderId))
-                                    : undefined;
-                                updateMessageStatusInCache(chatId, data.newState, false, senderIdStr);
-                            }
-                        });
-                    }
-                }).catch(() => {
-                    // Fallback: invalidate nếu API lỗi
-                    queryClient.invalidateQueries({ queryKey: ['chats'] });
-                });
-
-                // Trả về list hiện tại để React Query không revert cache
-                // (chat mới sẽ được thêm vào async qua then() bên trên)
-                return oldList ? [...oldList] : [];
-            });
-
-            // 2. Cập nhật CHI TIẾT
-            queryClient.setQueryData(detailKey, (oldMessages: any[] | undefined) => {
-                if (!oldMessages) return [];
-
-                // Nếu là tin nhắn thu hồi/xóa
-                if (deleted) {
-                    const recallText = senderName ? `Tin nhắn đã được ${senderName} thu hồi` : "Tin nhắn đã được thu hồi";
-                    return oldMessages.map((m: any) =>
-                        (m.id === messageId || m.content === content || m.id === content)
-                            ? { ...m, deleted: true, content: recallText, text: recallText }
-                            : m
-                    );
-                }
-
-                // Kiểm tra trùng lặp bằng ID chính xác từ server (Tránh trùng lặp do nhận Socket và REST cùng lúc)
-                const isDup = oldMessages.some((m: any) => m.id === messageId);
-                // Tìm tin nhắn lạc quan (optimistic) có cùng nội dung + sender để thay thế
-                const optimisticMsgIndex = oldMessages.findIndex(m =>
-                    (m.id?.startsWith('temp-') || m.state === 'SENDING') &&
-                    m.senderId === senderId &&
-                    m.content === content
-                );
-
-                if (isDup) {
-                    // Nếu đã có, cập nhật lại với data chuẩn từ Socket
-                    return oldMessages.map(m => m.id === messageId ? { ...m, mediaUrl, fileName, replyTo } : m);
-                }
-
-                if (optimisticMsgIndex !== -1) {
-                    // Thay thế tin nhắn lạc quan bằng tin nhắn thật từ Socket
-                    const newList = [...oldMessages];
-                    newList[optimisticMsgIndex] = {
-                        ...newList[optimisticMsgIndex],
-                        id: messageId,
-                        state: 'SENT',
-                        createdAt: time,
-                        createdDate: time,
-                        mediaUrl: mediaUrl,
-                        fileName: fileName,
-                        replyTo: replyTo
-                    };
-                    return newList;
-                }
-
-                const newMessage = {
-                    id: messageId,
-                    chatId: chatId,
-                    content: content,
-                    text: content,
-                    type: type || 'TEXT',
-                    createdAt: time,
-                    createdDate: time,
-                    senderId: senderId,
-                    senderName: senderName,
-                    state: 'SENT',
-                    deleted: deleted,
-                    mediaUrl: mediaUrl,
-                    fileName: fileName,
-                    replyTo: replyTo,
-                    reactions: []
-                };
-                return [newMessage, ...oldMessages];
-            });
-
-            if (chatListeners.current[chatId]) {
-                chatListeners.current[chatId].forEach(cb => cb({ chatId, messageId, content, createdAt: time, senderId, senderName, type, mediaUrl, deleted, fileName, replyTo }));
-            }
-
-            // 3. THÔNG BÁO (Nếu không phải chat đang mở)
-            if (activeChatIdRef.current !== chatId && !deleted) {
-                const currentUser = useAuthStore.getState().user;
-                if (senderId !== (currentUser as any)?.id) {
-                    // Hiển thị Toast trong app
-                    showMessage({
-                        message: senderName || "Tin nhắn mới",
-                        description: content || "[Hình ảnh/Video]",
-                        type: "info",
-                        backgroundColor: "#0068FF",
-                        onPress: () => {
-                            router.push({
-                                pathname: "/(root)/chat/[id]",
-                                params: { id: chatId, name: senderName || "Chat", isGroup: String(isGroup) }
-                            });
-                        }
-                    });
-
-                    // Hiển thị Notification hệ thống
-                    scheduleNotificationAsync({
-                        content: {
-                            title: senderName || "Tin nhắn mới",
-                            body: content || "[Hình ảnh/Video]",
-                            data: { chatId, isGroup },
-                        },
-                        trigger: null,
-                    });
-                }
-            }
-
-            // 4. ĐÁNH DẤU ĐÃ XEM NGAY LẬP TỨC (Nếu đang mở chat) — chỉ cho 1-1
-            // Nhóm: BE tự clear unread trong getMessages(), không cần gọi API
-            const currentUser = useAuthStore.getState().user;
-            const myId = (currentUser as any)?.id;
-            if (activeChatIdRef.current === chatId && senderId !== myId && !isGroup) {
-              markMessagesAsSeen(chatId).catch(() => { });
-            }
-        };
-
-        const updateReactionsInCache = (chatId: string, messageId: string, reactions: any[], isGroup: boolean) => {
-            const detailKey = isGroup ? ['group-messages', chatId, 0] : ['messages', chatId, 0];
-            queryClient.setQueryData(detailKey, (oldMessages: any[] | undefined) => {
-                if (!oldMessages) return oldMessages;
-                return oldMessages.map((m: any) =>
-                    m.id === messageId ? { ...m, reactions } : m
-                );
-            });
-        };
-
-        // Thứ tự state: SENT < DELIVERED < SEEN (chỉ nâng cấp, không hạ xuống)
-        const STATE_ORDER: Record<string, number> = { SENDING: 0, SENT: 1, DELIVERED: 2, SEEN: 3 };
-
-        const updateMessageStatusInCache = (chatId: string, status: string, isGroup: boolean, messageSenderId?: string) => {
-            const detailKey = isGroup ? ['group-messages', chatId, 0] : ['messages', chatId, 0];
-            queryClient.setQueryData(detailKey, (oldMessages: any[] | undefined) => {
-                if (!oldMessages) return oldMessages;
-                return oldMessages.map((m: any) => {
-                    // Chỉ cập nhật tin nhắn của người gửi được chỉ định (nếu có)
-                    if (messageSenderId && m.senderId !== messageSenderId) return m;
-                    // Chỉ nâng cấp trạng thái, không hạ xuống (SEEN > DELIVERED > SENT)
-                    const currentOrder = STATE_ORDER[m.state] ?? 0;
-                    const newOrder = STATE_ORDER[status] ?? 0;
-                    if (newOrder <= currentOrder) return m;
-                    return { ...m, state: status };
-                });
-            });
-        };
 
         client.onConnect = () => {
             setIsConnected(true);
@@ -434,6 +530,20 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
                 const data = JSON.parse(msg.body);
                 queryClient.invalidateQueries({ queryKey: ["friend-requests"] });
                 queryClient.invalidateQueries({ queryKey: ["contacts"] });
+
+                // Tự động khởi tạo chat khi đối phương đồng ý kết bạn
+                if (data.receiverId) {
+                    startOrGetChat(data.receiverId).then((newChat) => {
+                        queryClient.setQueryData(["chats"], (old: any[] | undefined) => {
+                            const currentList = old ? [...old] : [];
+                            if (currentList.some(c => c.id === newChat.id)) return old;
+                            return [newChat, ...currentList];
+                        });
+                    }).catch((err) => {
+                        console.warn('[Socket] Proactive startChat failed:', err);
+                    });
+                }
+
                 showMessage({
                     message: "Kết bạn thành công",
                     description: `${data.receiverName.trim()} đã chấp nhận lời mời kết bạn của bạn.`,
@@ -575,43 +685,6 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
                     queryClient.invalidateQueries({ queryKey: ['pinned-messages', groupId] });
                 }
             });
-
-            // ─── ĐĂNG KÝ CÁC CHAT ĐANG CÓ (Delayed để fetch xong list) ────────
-
-            setTimeout(async () => {
-                try {
-                    const [chats, groups] = await Promise.all([getAllChats(), getMyGroups()]);
-                    chats?.forEach(chat => {
-                        client.subscribe(`/topic/chat/${chat.id}`, (msg) => {
-                            const data = JSON.parse(msg.body);
-                            // Nếu là cập nhật trạng thái (newState) — data.messageSenderId là UUID người gửi gốc
-                            if (data.newState && !data.id) {
-                                const senderIdStr = data.messageSenderId
-                                    ? (typeof data.messageSenderId === 'string' ? data.messageSenderId : String(data.messageSenderId))
-                                    : undefined;
-                                updateMessageStatusInCache(chat.id, data.newState, false, senderIdStr);
-                            }
-                            // Nếu là tin nhắn mới
-                            else if (data.id) {
-                                updateCache(chat.id, data.id, data.content, data.createdAt, data.senderName, data.type, false, data.senderId, data.mediaUrl, data.deleted, data.fileName, data.replyTo);
-                            }
-                        });
-                    });
-                    groups?.forEach(group => {
-                        client.subscribe(`/topic/group/${group.id}`, (msg) => {
-                            const data = JSON.parse(msg.body);
-                            if (data.newState && !data.id) {
-                                // Cập nhật trạng thái tin nhắn nhóm (Seen/Delivered cho cả nhóm)
-                                updateMessageStatusInCache(group.id, data.newState, true);
-                            } else if (data.id) {
-                                updateCache(group.id, data.id, data.content, data.createdDate || data.createdAt, data.senderName, data.type, true, data.senderId, data.mediaUrl, data.deleted, data.fileName, data.replyTo);
-                            } else if (data.messageId && data.reactions) {
-                                updateReactionsInCache(group.id, data.messageId, data.reactions, true);
-                            }
-                        });
-                    });
-                } catch (e) { }
-            }, 500);
         };
 
         client.onDisconnect = () => setIsConnected(false);

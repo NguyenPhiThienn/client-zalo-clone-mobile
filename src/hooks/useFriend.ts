@@ -13,6 +13,7 @@ import {
   unblockUser,
   getBlockedUsers,
 } from "@/api/user";
+import { startOrGetChat } from "@/api/chat";
 
 export const useContacts = () => {
   return useQuery({
@@ -49,9 +50,22 @@ export const useAcceptFriendRequest = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: acceptFriendRequest,
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["friend-requests"] });
       queryClient.invalidateQueries({ queryKey: ["contacts"] });
+
+      // Tự động khởi tạo chat khi đồng ý kết bạn để cả 2 bên cùng subscribe topic real-time ngay
+      if (data?.senderId) {
+        startOrGetChat(data.senderId).then((newChat) => {
+          queryClient.setQueryData(["chats"], (old: any[] | undefined) => {
+            const currentList = old ? [...old] : [];
+            if (currentList.some(c => c.id === newChat.id)) return old;
+            return [newChat, ...currentList];
+          });
+        }).catch((err) => {
+          console.warn('[Friend] Proactive startChat failed:', err);
+        });
+      }
     },
   });
 };
