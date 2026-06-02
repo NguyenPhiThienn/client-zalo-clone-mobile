@@ -2,7 +2,7 @@
 import { fetchAPI } from "@/lib/fetch";
 
 // ─── Enums (khớp MessageState & MessageType) ──────────────────────────────────
-export type MessageType = "TEXT" | "IMAGE" | "VIDEO" | "FILE" | "AUDIO" | "VOICE" | "NOTIFICATION" | "SYSTEM";
+export type MessageType = "TEXT" | "IMAGE" | "VIDEO" | "FILE" | "AUDIO" | "VOICE" | "NOTIFICATION";
 export type MessageState = "SENT" | "DELIVERED" | "SEEN";
 
 // ─── Types (khớp MessageDto.java) ─────────────────────────────────────────────

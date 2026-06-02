@@ -148,9 +148,8 @@ export const setGroupAdmin = async (groupId: string, userId: string): Promise<Gr
   return fetchAPI(`/group/${groupId}/members/${userId}/set-admin`, { method: 'PATCH' });
 };
 
-export const leaveGroup = async (groupId: string, newAdminId?: string): Promise<void> => {
-  const query = newAdminId ? `?newAdminId=${encodeURIComponent(newAdminId)}` : '';
-  await fetchAPI(`/group/${groupId}/leave${query}`, { method: 'DELETE' });
+export const leaveGroup = async (groupId: string): Promise<void> => {
+  await fetchAPI(`/group/${groupId}/leave`, { method: 'DELETE' });
 };
 
 export const dissolveGroup = async (groupId: string): Promise<void> => {
