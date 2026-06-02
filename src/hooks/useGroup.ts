@@ -242,7 +242,7 @@ export const useSetGroupAdmin = (groupId: string) => {
 export const useLeaveGroup = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (groupId: string) => leaveGroup(groupId),
+    mutationFn: ({ groupId, newAdminId }: { groupId: string; newAdminId?: string }) => leaveGroup(groupId, newAdminId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["groups"] });
     },

@@ -107,11 +107,7 @@ export function getImageUrl(path?: string): string | undefined {
   // 1. Nếu đã là URL hoàn chỉnh (Presigned S3, HTTP, hoặc Local Device File URI) thì lấy nguyên bản
   if (path.startsWith('http') || path.startsWith('file://')) return path;
 
-  // 2. Nếu là raw S3 Key (không có dấu /), chỉ có extension → trỏ thẳng về bucket S3 (public-read)
-  if (!path.includes('/')) {
-    return `${S3_BASE_URL}/${path}`;
-  }
-
-  // 3. Relative path có chứa / → trỏ thẳng về bucket S3
-  return `${S3_BASE_URL}/${path}`;
+  // 2. Trỏ thẳng về endpoint serve file (proxy) của BE thay vì S3 trực tiếp (vì S3 private)
+  const baseUrl = process.env.EXPO_PUBLIC_SERVER_URL || "https://zalo-fullstack-app-production.up.railway.app/api/v1";
+  return `${baseUrl}/message/media/${path}`;
 }

@@ -43,6 +43,7 @@ export default function GroupInfoScreen() {
   const [editName, setEditName] = useState(false);
   const [newName, setNewName] = useState('');
   const [showAddMember, setShowAddMember] = useState(false);
+  const [showSelectAdmin, setShowSelectAdmin] = useState(false);
 
   const { mutate: updateName, isPending: updatingName } = useUpdateGroup(id);
   const { mutate: uploadAvatar, isPending: uploadingAvatar } = useUploadGroupAvatar(id);
@@ -71,6 +72,11 @@ export default function GroupInfoScreen() {
 
   // BE trả về isAdmin trực tiếp trong GroupDto
   const isAdmin = group?.isAdmin ?? false;
+  const admins = (group?.members || []).filter(m => m.admin);
+  const isMeOnlyAdmin = isAdmin && admins.length === 1;
+  const hasOtherMembers = (group?.members || []).length > 1;
+  const isLastAdmin = isMeOnlyAdmin && hasOtherMembers;
+  const nonAdminMembers = (group?.members || []).filter(m => m.userId !== user?.id && !m.admin);
   const memberIds = (group?.members || []).map(m => m.userId);
 
   // Danh sách bạn bè có thể thêm
@@ -136,11 +142,16 @@ export default function GroupInfoScreen() {
   };
 
   const handleLeave = () => {
+    if (isLastAdmin) {
+      setShowSelectAdmin(true);
+      return;
+    }
+
     Alert.alert('Rời nhóm', 'Bạn có chắc muốn rời nhóm này?', [
       { text: 'Hủy', style: 'cancel' },
       {
         text: 'Rời nhóm', style: 'destructive',
-        onPress: () => leaveGroup(id, {
+        onPress: () => leaveGroup({ groupId: id }, {
           onSuccess: () => {
             router.replace('/(root)/tabs/home');
           },
@@ -148,6 +159,18 @@ export default function GroupInfoScreen() {
         }),
       },
     ]);
+  };
+
+  const handleLeaveWithNewAdmin = (newAdminId: string) => {
+    leaveGroup({ groupId: id, newAdminId }, {
+      onSuccess: () => {
+        setShowSelectAdmin(false);
+        router.replace('/(root)/tabs/home');
+      },
+      onError: (err: any) => {
+        Alert.alert('Lỗi', err.message || 'Không thể rời nhóm');
+      },
+    });
   };
 
   const handleDissolve = () => {
@@ -427,6 +450,14 @@ export default function GroupInfoScreen() {
         }}
         isPending={addingMembers || creatingRequests}
       />
+
+      <SelectNewAdminModal
+        visible={showSelectAdmin}
+        members={nonAdminMembers}
+        onClose={() => setShowSelectAdmin(false)}
+        onConfirm={handleLeaveWithNewAdmin}
+        isPending={leaving}
+      />
     </View>
   );
 }
@@ -687,3 +718,67 @@ const styles = StyleSheet.create({
     fontFamily: 'Jakarta-Bold',
   },
 });
+
+const SelectNewAdminModal = ({
+  visible, members, onClose, onConfirm, isPending
+}: {
+  visible: boolean;
+  members: any[];
+  onClose: () => void;
+  onConfirm: (userId: string) => void;
+  isPending: boolean;
+}) => {
+  const [selected, setSelected] = useState<string | null>(null);
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent>
+      <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}>
+        <View style={{ backgroundColor: 'white', borderTopLeftRadius: 24, borderTopRightRadius: 24, height: '60%' }}>
+          {/* Header */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', padding: 16, borderBottomWidth: 1, borderBottomColor: '#F3F4F6' }}>
+            <TouchableOpacity onPress={onClose}><Text style={{ color: '#6B7280', fontSize: 16 }}>Hủy</Text></TouchableOpacity>
+            <Text style={{ fontFamily: 'Jakarta-Bold', fontSize: 17 }}>Chọn admin mới</Text>
+            <TouchableOpacity onPress={() => selected && onConfirm(selected)} disabled={!selected || isPending}>
+              <Text style={{ color: selected ? '#EF4444' : '#D1D5DB', fontFamily: 'Jakarta-Bold', fontSize: 16 }}>
+                {isPending ? 'Đang rời...' : 'Rời nhóm'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={{ padding: 16 }}>
+            <Text style={{ fontSize: 14, color: '#4B5563', fontFamily: 'Jakarta-Medium', marginBottom: 12 }}>
+              Bạn là admin duy nhất của nhóm. Hãy chỉ định một thành viên làm admin mới trước khi rời nhóm.
+            </Text>
+          </View>
+
+          {/* Danh sách thành viên */}
+          <FlatList
+            data={members}
+            keyExtractor={(item) => item.userId}
+            renderItem={({ item }) => {
+              const isSelected = selected === item.userId;
+              const displayName = getMemberName(item);
+              return (
+                <TouchableOpacity
+                  onPress={() => setSelected(item.userId)}
+                  style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#F9FAFB' }}
+                >
+                  <Image
+                    source={{ uri: getAvatarUrl(displayName, item.avatarUrl) }}
+                    style={{ width: 40, height: 40, borderRadius: 20, marginRight: 12 }}
+                  />
+                  <Text style={{ flex: 1, fontSize: 15, fontFamily: 'Jakarta-Medium', color: '#1F2937' }}>
+                    {displayName}
+                  </Text>
+                  <View style={{ width: 22, height: 22, borderRadius: 11, borderWidth: 2, alignItems: 'center', justifyContent: 'center', backgroundColor: isSelected ? '#0068FF' : 'transparent', borderColor: isSelected ? '#0068FF' : '#D1D5DB' }}>
+                    {isSelected && <Ionicons name="checkmark" size={14} color="white" />}
+                  </View>
+                </TouchableOpacity>
+              );
+            }}
+          />
+        </View>
+      </View>
+    </Modal>
+  );
+};

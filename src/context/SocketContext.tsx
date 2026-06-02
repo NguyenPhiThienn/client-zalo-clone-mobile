@@ -43,6 +43,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     const queryClient = useQueryClient();
     const chatListeners = useRef<Record<string, ((data: any) => void)[]>>({});
     const activeChatIdRef = useRef<string | null>(null);
+    const subscribedTopicsRef = useRef<Set<string>>(new Set());
 
     useEffect(() => {
         const requestPermissions = async () => {
@@ -247,6 +248,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
 
         client.onConnect = () => {
             setIsConnected(true);
+            subscribedTopicsRef.current.clear();
 
             // ─── LẮNG NGHE CÁC SỰ KIỆN HỆ THỐNG (Mức User) ───────────────────
 
@@ -390,6 +392,46 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
                 });
             });
 
+            // 9.5 Lắng nghe tin nhắn cá nhân (Để nhận tin nhắn real-time từ cuộc trò chuyện mới hoặc cuộc trò chuyện cũ chưa subscribe)
+            client.subscribe('/user/queue/messages', (msg) => {
+                const data = JSON.parse(msg.body);
+                console.log("[Socket] 💬 PERSONAL MESSAGE RECEIVED:", data);
+                if (data.chatId && data.id) {
+                    updateCache(
+                        data.chatId,
+                        data.id,
+                        data.content,
+                        data.createdDate || data.createdAt,
+                        data.senderName,
+                        data.type,
+                        false, // isGroup = false
+                        data.senderId,
+                        data.mediaUrl,
+                        data.deleted,
+                        data.fileName,
+                        data.replyTo
+                    );
+
+                    // Subscribe tin nhắn mới cho cuộc trò chuyện này nếu chưa subscribe
+                    const topic = `/topic/chat/${data.chatId}`;
+                    if (!subscribedTopicsRef.current.has(topic)) {
+                        subscribedTopicsRef.current.add(topic);
+                        client.subscribe(topic, (cMsg) => {
+                            const cData = JSON.parse(cMsg.body);
+                            if (cData.id) {
+                                updateCache(data.chatId, cData.id, cData.content, cData.createdAt, cData.senderName, cData.type, false, cData.senderId, cData.mediaUrl, cData.deleted, cData.fileName, cData.replyTo);
+                            }
+                        });
+                    }
+
+                    // Nếu là chat mới (chưa có trong list 'chats'), thì invalidate để load lại list
+                    const chats = queryClient.getQueryData<any[]>(['chats']);
+                    if (!chats || !chats.find(c => c.id === data.chatId)) {
+                        queryClient.invalidateQueries({ queryKey: ['chats'] });
+                    }
+                }
+            });
+
             // 10. LẮNG NGHE CÁC SỰ KIỆN NHÓM (Chuẩn hóa /queue/group-events)
             client.subscribe('/user/queue/group-events', (msg) => {
                 const data = JSON.parse(msg.body);
@@ -419,14 +461,18 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
                     });
 
                     // Subscribe tin nhắn mới cho nhóm này ngay lập tức
-                    client.subscribe(`/topic/group/${groupId}`, (gMsg) => {
-                        const gData = JSON.parse(gMsg.body);
-                        if (gData.id) {
-                            updateCache(groupId, gData.id, gData.content, gData.createdDate || gData.createdAt, gData.senderName, gData.type, true, gData.senderId, gData.mediaUrl, gData.deleted, gData.fileName, gData.replyTo);
-                        } else if (gData.messageId && gData.reactions) {
-                            updateReactionsInCache(groupId, gData.messageId, gData.reactions, true);
-                        }
-                    });
+                    const topic = `/topic/group/${groupId}`;
+                    if (!subscribedTopicsRef.current.has(topic)) {
+                        subscribedTopicsRef.current.add(topic);
+                        client.subscribe(topic, (gMsg) => {
+                            const gData = JSON.parse(gMsg.body);
+                            if (gData.id) {
+                                updateCache(groupId, gData.id, gData.content, gData.createdDate || gData.createdAt, gData.senderName, gData.type, true, gData.senderId, gData.mediaUrl, gData.deleted, gData.fileName, gData.replyTo);
+                            } else if (gData.messageId && gData.reactions) {
+                                updateReactionsInCache(groupId, gData.messageId, gData.reactions, true);
+                            }
+                        });
+                    }
 
                     showMessage({
                         message: "Thông báo nhóm",
@@ -519,7 +565,9 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
                 try {
                     const [chats, groups] = await Promise.all([getAllChats(), getMyGroups()]);
                     chats?.forEach(chat => {
-                        client.subscribe(`/topic/chat/${chat.id}`, (msg) => {
+                        const topic = `/topic/chat/${chat.id}`;
+                        subscribedTopicsRef.current.add(topic);
+                        client.subscribe(topic, (msg) => {
                             const data = JSON.parse(msg.body);
                             // Nếu là cập nhật trạng thái (newState) — data.messageSenderId là UUID người gửi gốc
                             if (data.newState && !data.id) {
@@ -535,7 +583,9 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
                         });
                     });
                     groups?.forEach(group => {
-                        client.subscribe(`/topic/group/${group.id}`, (msg) => {
+                        const topic = `/topic/group/${group.id}`;
+                        subscribedTopicsRef.current.add(topic);
+                        client.subscribe(topic, (msg) => {
                             const data = JSON.parse(msg.body);
                             if (data.newState && !data.id) {
                                 // Cập nhật trạng thái tin nhắn nhóm (Seen/Delivered cho cả nhóm)
